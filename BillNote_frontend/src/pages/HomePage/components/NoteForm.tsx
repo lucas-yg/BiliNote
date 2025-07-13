@@ -64,6 +64,9 @@ const formSchema = z
       ctx.addIssue({ code: 'custom', message: '本地视频路径不能为空', path: ['video_url'] })
     } else if (!video_url) {
       ctx.addIssue({ code: 'custom', message: '视频链接不能为空', path: ['video_url'] })
+    } else if (platform === 'local') {
+      // 对于本地文件，只检查是否为空，不验证URL格式
+      return
     } else {
       try {
         const url = new URL(video_url)

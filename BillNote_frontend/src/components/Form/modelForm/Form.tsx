@@ -156,9 +156,10 @@ const ProviderForm = ({ isCreate = false }: { isCreate?: boolean }) => {
 
         toast.success('测试连通性成功 🎉')
 
-    } catch (error) {
-
-      toast.error(`连接失败: ${data.data.msg || '未知错误'}`)
+    } catch (error: any) {
+      console.error('连接测试失败:', error)
+      const errorMsg = error?.response?.data?.msg || error?.message || '未知错误'
+      toast.error(`连接失败: ${errorMsg}`)
       // toast.error('测试连通性异常')
     } finally {
       setTesting(false)
