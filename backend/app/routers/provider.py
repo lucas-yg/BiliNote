@@ -88,5 +88,10 @@ def update_provider(data: ProviderUpdateRequest):
 
 @router.post('/connect_test')
 def gpt_connect_test(data: TestRequest):
-    ModelService().connect_test(data.id)
-    return R.success(msg='连接成功')
+    try:
+        ModelService().connect_test(data.id)
+        return R.success(msg='连接成功')
+    except ProviderError as e:
+        return R.error(msg=e.message, code=e.code)
+    except Exception as e:
+        return R.error(msg=f'连接测试失败: {str(e)}')

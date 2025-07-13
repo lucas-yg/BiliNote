@@ -31,8 +31,20 @@ class ModelService:
 
         try:
             config = ModelService._build_model_config(provider)
-            gpt = GPTFactory().from_config(config)
-            models = gpt.list_models()
+            
+            # 如果是硅基流动，使用专门的提供商类
+            if "siliconflow" in provider["base_url"].lower():
+                from app.gpt.provider.SiliconFlow_provider import SiliconFlowProvider
+                silicon_provider = SiliconFlowProvider(
+                    api_key=provider["api_key"],
+                    base_url=provider["base_url"]
+                )
+                models = silicon_provider.list_models()
+            else:
+                # 其他提供商使用通用方法
+                gpt = GPTFactory().from_config(config)
+                models = gpt.list_models()
+                
             if verbose:
                 print(f"[{provider['name']}] 模型列表: {models}")
             return models
@@ -87,10 +99,23 @@ class ModelService:
             provider = ProviderService.get_provider_by_id(provider_id)
 
             models = ModelService.get_model_list(provider["id"], verbose=verbose)
-            print(type(models))
-            serializable_models = [m.dict() for m in models.data]
+            print(f"模型对象类型: {type(models)}")
+            
+            # 处理不同的模型列表格式
+            if hasattr(models, 'data'):
+                # OpenAI标准格式，有.data属性
+                serializable_models = [m.dict() for m in models.data]
+            elif isinstance(models, list):
+                # 直接返回list的格式
+                serializable_models = [m.dict() if hasattr(m, 'dict') else m for m in models]
+            else:
+                # 其他格式，尝试直接转换
+                serializable_models = [models.dict()] if hasattr(models, 'dict') else [models]
+            
             model_list = {
-                "models": serializable_models
+                "models": {
+                    "data": serializable_models
+                }
             }
 
             logger.info(f"[{provider['name']}] 获取模型成功")
@@ -106,15 +131,24 @@ class ModelService:
 
         if provider:
             if not provider.get('api_key'):
-                raise ProviderError(code=ProviderErrorEnum.NOT_FOUND.code, message=ProviderErrorEnum.NOT_FOUND.message)
-            result =  OpenAICompatibleProvider.test_connection(
-                api_key=provider.get('api_key'),
-                base_url=provider.get('base_url')
-            )
-            if result:
-                return True
-            else:
-                raise ProviderError(code=ProviderErrorEnum.WRONG_PARAMETER.code,message=ProviderErrorEnum.WRONG_PARAMETER.message)
+                raise ProviderError(code=ProviderErrorEnum.NOT_FOUND.code, message="API Key 不能为空")
+            
+            try:
+                result = OpenAICompatibleProvider.test_connection(
+                    api_key=provider.get('api_key'),
+                    base_url=provider.get('base_url')
+                )
+                if result:
+                    return True
+                else:
+                    raise ProviderError(code=ProviderErrorEnum.WRONG_PARAMETER.code, message="连接测试失败")
+            except Exception as e:
+                # 如果是我们自定义的错误信息，直接抛出
+                if isinstance(e, ProviderError):
+                    raise e
+                else:
+                    # 将底层错误包装成ProviderError
+                    raise ProviderError(code=ProviderErrorEnum.WRONG_PARAMETER.code, message=str(e))
 
         raise ProviderError(code=ProviderErrorEnum.NOT_FOUND.code, message=ProviderErrorEnum.NOT_FOUND.message)
 

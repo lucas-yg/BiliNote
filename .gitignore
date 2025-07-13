@@ -308,6 +308,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+# 项目特定的私人信息和敏感文件
 /backend/data/*
 /backend/static/*
 /backend/note_tasks.db
@@ -322,3 +323,50 @@ cython_debug/
 /backend/config/*
 /BiliNote_frontend/.idea/*
 /BiliNote_frontend/src-tauri/bin/
+
+# 额外需要忽略的敏感文件和目录
+/backend/test_env/
+/backend/test_*.py
+/backend/venv/
+/backend/get-pip.py
+/backend/fonts/
+*.db
+*.sqlite
+*.sqlite3
+*_backup.sql
+
+# API测试脚本（可能包含敏感信息）
+test_siliconflow.py
+test_*.py
+
+# 模型文件和缓存（通常很大，且可能有版权问题）
+/backend/models/
+whisper*/
+*.bin
+*.safetensors
+*.gguf
+
+# 用户生成内容
+/backend/uploads/*
+/backend/data/*
+/backend/note_results/*
+/backend/static/screenshots/*
+/backend/static/cover/*
+
+# 临时测试环境
+test_env/
+*_env/
+
+# 配置文件（可能包含API keys）
+/backend/config/*
+config.json
+settings.json
+
+# 备份文件
+*.bak
+*.bak2
+*_backup.*
+
+# 输出和缓存目录
+/backend/data/output_frames/*
+/backend/data/grid_output/*
