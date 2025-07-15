@@ -375,6 +375,16 @@ settings.json
 # 输出和缓存目录
 /backend/data/output_frames/*
 /backend/data/grid_output/*
+/backend/data/
+/backend/uploads/
+/backend/note_results/
+/backend/venv/
+/backend/models/
+/backend/backend/
+
+# Node.js dependencies
+node_modules/
+**/node_modules/
 
 # PNPM specific
 .pnpm-store/
