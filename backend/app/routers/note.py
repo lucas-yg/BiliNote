@@ -15,6 +15,7 @@ from app.enmus.exception import NoteErrorEnum
 from app.enmus.note_enums import DownloadQuality
 from app.exceptions.note import NoteError
 from app.services.note import NoteGenerator, logger
+from app.services.storage_cleanup import storage_cleanup
 from app.utils.response import ResponseWrapper as R
 from app.utils.url_parser import extract_video_id
 from app.validators.video_url_validator import is_supported_video_url
@@ -82,27 +83,39 @@ def run_note_task(task_id: str, video_url: str, platform: str, quality: Download
     if not model_name or not provider_id:
         raise HTTPException(status_code=400, detail="请选择模型和提供者")
 
-    note = NoteGenerator().generate(
-        video_url=video_url,
-        platform=platform,
-        quality=quality,
-        task_id=task_id,
-        model_name=model_name,
-        provider_id=provider_id,
-        link=link,
-        _format=_format,
-        style=style,
-        extras=extras,
-        screenshot=screenshot
-        , video_understanding=video_understanding,
-        video_interval=video_interval,
-        grid_size=grid_size
-    )
-    logger.info(f"Note generated: {task_id}")
-    if not note or not note.markdown:
-        logger.warning(f"任务 {task_id} 执行失败，跳过保存")
-        return
-    save_note_to_file(task_id, note)
+    try:
+        note = NoteGenerator().generate(
+            video_url=video_url,
+            platform=platform,
+            quality=quality,
+            task_id=task_id,
+            model_name=model_name,
+            provider_id=provider_id,
+            link=link,
+            _format=_format,
+            style=style,
+            extras=extras,
+            screenshot=screenshot
+            , video_understanding=video_understanding,
+            video_interval=video_interval,
+            grid_size=grid_size
+        )
+        logger.info(f"Note generated: {task_id}")
+        if not note or not note.markdown:
+            logger.warning(f"任务 {task_id} 执行失败，跳过保存")
+        else:
+            save_note_to_file(task_id, note)
+    except Exception as e:
+        logger.error(f"任务 {task_id} 执行异常: {e}")
+        raise
+    finally:
+        # 无论成功还是失败，都清理与此任务相关的视频文件
+        logger.info(f"开始清理任务 {task_id} 相关的视频文件")
+        try:
+            storage_cleanup.cleanup_after_processing(task_id, keep_uploads=False)
+        except Exception as cleanup_error:
+            logger.error(f"清理任务 {task_id} 文件时出错: {cleanup_error}")
+            # 清理失败不影响主流程
 
 
 
@@ -120,12 +133,22 @@ def delete_task(data: RecordRequest):
 async def upload(file: UploadFile = File(...)):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     file_location = os.path.join(UPLOAD_DIR, file.filename)
-
-    with open(file_location, "wb+") as f:
-        f.write(await file.read())
-
-    # 假设你静态目录挂载了 /uploads
-    return R.success({"url": f"/uploads/{file.filename}"})
+    
+    try:
+        with open(file_location, "wb+") as f:
+            f.write(await file.read())
+        
+        # 假设你静态目录挂载了 /uploads
+        return R.success({"url": f"/uploads/{file.filename}"})
+    except Exception as e:
+        # 如果上传失败，删除可能存在的不完整文件
+        if os.path.exists(file_location):
+            try:
+                os.remove(file_location)
+                logger.info(f"删除上传失败的文件: {file_location}")
+            except Exception as cleanup_error:
+                logger.error(f"删除上传失败文件时出错: {cleanup_error}")
+        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
 
 
 @router.post("/generate_note")

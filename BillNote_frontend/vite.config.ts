@@ -2,11 +2,15 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import tailwindcss from '@tailwindcss/vite';
+import dns from 'dns';
+
+// 强制使用IPv4解析
+dns.setDefaultResultOrder('ipv4first');
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd());
-  const apiBaseUrl = env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const apiBaseUrl = env.VITE_API_BASE_URL || 'http://127.0.0.1:8483';
   const port = parseInt(env.VITE_FRONTEND_PORT || '3015', 10);
 
   return {
@@ -60,12 +64,12 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: apiBaseUrl,
           changeOrigin: true,
-          rewrite: path => path.replace(/^\/api/, '/api'),
+          rewrite: (path) => path.replace(/^\/api/, '/api'),
         },
         '/static': {
           target: apiBaseUrl,
           changeOrigin: true,
-          rewrite: path => path.replace(/^\/static/, '/static'),
+          rewrite: (path) => path.replace(/^\/static/, '/static'),
         },
       },
     },

@@ -36,6 +36,7 @@ from app.utils.note_helper import replace_content_markers
 from app.utils.status_code import StatusCode
 from app.utils.video_helper import generate_screenshot
 from app.utils.video_reader import VideoReader
+from app.services.storage_cleanup import storage_cleanup
 
 # ------------------ 环境变量与全局配置 ------------------
 
@@ -191,6 +192,35 @@ class NoteGenerator:
             logger.error(f"生成笔记流程异常 (task_id={task_id})：{exc}", exc_info=True)
             self._update_status(task_id, TaskStatus.FAILED, message=str(exc))
             return None
+        finally:
+            # 无论成功还是失败，都清理与此任务相关的视频文件
+            if task_id:
+                logger.info(f"开始清理任务 {task_id} 相关的视频文件")
+                try:
+                    # 提取上传文件名用于清理
+                    uploaded_filename = None
+                    if platform == "local" and video_url.startswith('/uploads'):
+                        uploaded_filename = os.path.basename(video_url)
+                        logger.info(f"检测到上传文件: {uploaded_filename}")
+                    
+                    # 清理上传文件和下载的视频文件
+                    storage_cleanup.cleanup_after_processing(
+                        task_id,
+                        keep_uploads=False,
+                        uploaded_filename=uploaded_filename,
+                        video_path=self.video_path  # 传递下载的视频路径
+                    )
+                except Exception as cleanup_error:
+                    logger.error(f"清理任务 {task_id} 文件时出错: {cleanup_error}")
+                    # 清理失败不影响主流程
+                
+                # 确保清理视频文件（即使cleanup_after_processing失败）
+                if hasattr(self, 'video_path') and self.video_path and self.video_path.exists():
+                    try:
+                        logger.info(f"强制删除视频文件: {self.video_path}")
+                        os.unlink(self.video_path)
+                    except Exception as e:
+                        logger.error(f"强制删除视频文件失败: {e}")
 
     @staticmethod
     def delete_note(video_id: str, platform: str) -> int:
