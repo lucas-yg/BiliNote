@@ -6,8 +6,6 @@ import time
 import logging
 
 import yt_dlp
-# 导入youtube-dl作为备选
-import youtube_dl
 
 from app.downloaders.base import Downloader, DownloadQuality, QUALITY_MAP
 from app.models.notes_model import AudioDownloadResult
@@ -90,9 +88,9 @@ class BilibiliDownloader(Downloader, ABC):
             print(f"yt-dlp 下载失败，错误信息: {str(e)}")
             print("尝试使用备选下载器 youtube-dl...")
             
-            # 失败后尝试使用 youtube_dl
+            # 失败后尝试使用 yt_dlp
             try:
-                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     print(f"正在使用 youtube-dl 下载: {video_url}")
                     info = ydl.extract_info(video_url, download=True)
                     video_id = info.get("id")
@@ -199,9 +197,9 @@ class BilibiliDownloader(Downloader, ABC):
             print(f"yt-dlp 下载视频失败，错误信息: {str(e)}")
             print("尝试使用备选下载器 youtube-dl...")
             
-            # 失败后尝试使用 youtube_dl
+            # 失败后尝试使用 yt_dlp
             try:
-                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     print(f"正在使用 youtube-dl 下载视频: {video_url}")
                     info = ydl.extract_info(video_url, download=True)
                     video_id = info.get("id")

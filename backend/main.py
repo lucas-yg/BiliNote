@@ -45,19 +45,32 @@ async def lifespan(app: FastAPI):
     yield
 
 app = create_app(lifespan=lifespan)
-origins = [
-    "http://localhost",
-    "http://127.0.0.1",
-    "http://tauri.localhost",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,  #  加上 Tauri 的 origin
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 根据环境配置CORS
+ENV = os.getenv("ENV", "development")
+if ENV == "production":
+    # 生产环境使用具体的域名
+    origins = [
+        "http://localhost:3015",
+        "http://127.0.0.1:3015",
+        "http://localhost",
+        "http://127.0.0.1",
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # 开发环境允许所有域名
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 register_exception_handlers(app)
 app.mount(static_path, StaticFiles(directory=static_dir), name="static")
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")

@@ -1,0 +1,52 @@
+# === 前端构建阶段 ===
+FROM node:18-alpine AS builder
+
+# 设置 npm 镜像和环境变量
+ENV SASS_BINARY_SITE=https://npmmirror.com/mirrors/node-sass \
+    ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+    PUPPETEER_DOWNLOAD_HOST=https://npmmirror.com/mirrors \
+    CHROMEDRIVER_CDNURL=https://npmmirror.com/mirrors/chromedriver \
+    OPERADRIVER_CDNURL=https://npmmirror.com/mirrors/operadriver \
+    PHANTOMJS_CDNURL=https://npmmirror.com/mirrors/phantomjs \
+    SELENIUM_CDNURL=https://npmmirror.com/mirrors/selenium \
+    NODE_INSPECTOR_CDNURL=https://npmmirror.com/mirrors/node-inspector \
+    NODE_OPTIONS="--max-old-space-size=4096"
+
+RUN npm config set registry https://registry.npmmirror.com
+
+# 安装指定版本的 pnpm 并设置镜像源
+RUN npm install -g pnpm@8 && \
+    pnpm config set registry https://registry.npmmirror.com && \
+    pnpm config set store-dir /root/.pnpm-store
+
+# 设置工作目录
+WORKDIR /app
+
+# 先拷贝 package.json 和 lockfile 以利用 Docker 缓存
+COPY ./BillNote_frontend/package.json ./BillNote_frontend/pnpm-lock.yaml ./
+
+# 安装依赖 (移除 --frozen-lockfile，允许 lockfile 更新)
+RUN pnpm install --prefer-offline
+
+# 拷贝源代码 (排除 node_modules)
+COPY ./BillNote_frontend/src ./src
+COPY ./BillNote_frontend/public ./public
+COPY ./BillNote_frontend/index.html ./
+COPY ./BillNote_frontend/vite.config.ts ./
+COPY ./BillNote_frontend/tsconfig*.json ./
+COPY ./BillNote_frontend/tailwind.config.cjs ./
+COPY ./BillNote_frontend/postcss.config.cjs ./
+
+# 构建 - 使用更轻量的构建方式
+ENV NODE_ENV=production
+RUN pnpm run build --mode production
+
+# --- 阶段2：使用 nginx 作为静态服务器 ---
+FROM nginx:1.25-alpine
+
+# 删除默认配置（可选）
+RUN rm -rf /etc/nginx/conf.d/default.conf
+COPY ./BillNote_frontend/deploy/default.conf /etc/nginx/conf.d/default.conf
+
+# 拷贝构建产物
+COPY --from=builder /app/dist /usr/share/nginx/html

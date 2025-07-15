@@ -131,7 +131,6 @@ async def upload(file: UploadFile = File(...)):
 @router.post("/generate_note")
 def generate_note(data: VideoRequest, background_tasks: BackgroundTasks):
     try:
-
         video_id = extract_video_id(data.video_url, data.platform)
         # if not video_id:
         #     raise HTTPException(status_code=400, detail="无法提取视频 ID")

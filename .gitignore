@@ -79,6 +79,11 @@ web_modules/
 .env.production.local
 .env.local
 !.env.example
+# Frontend environment files
+BillNote_frontend/.env
+BillNote_frontend/.env.local
+BillNote_frontend/.env.development.local
+BillNote_frontend/.env.production.local
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
@@ -370,3 +375,18 @@ settings.json
 # 输出和缓存目录
 /backend/data/output_frames/*
 /backend/data/grid_output/*
+
+# PNPM specific
+.pnpm-store/
+BillNote_frontend/.pnpm-store/
+
+# Vite build outputs
+BillNote_frontend/dist/
+BillNote_frontend/.vite/
+
+# Tauri specific
+BillNote_frontend/src-tauri/target/
+BillNote_frontend/src-tauri/bin/
+
+# Additional frontend cache
+BillNote_frontend/.eslintcache

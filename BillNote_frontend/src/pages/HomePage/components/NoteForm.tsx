@@ -7,8 +7,8 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form.tsx'
-import { useEffect,useState } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { useEffect, useState } from 'react'
+import { useForm, useWatch, FieldErrors } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
@@ -58,8 +58,13 @@ const formSchema = z
       .tuple([z.coerce.number().min(1).max(10), z.coerce.number().min(1).max(10)])
       .default([3, 3])
       .optional(),
+    // 定时功能字段
+    scheduled_enabled: z.boolean().default(false),
+    schedule_time: z.string().optional(),
+    delay_minutes: z.coerce.number().min(1).max(1440).optional(),
+    task_name: z.string().optional(),
   })
-  .superRefine(({ video_url, platform }, ctx) => {
+  .superRefine(({ video_url, platform, scheduled_enabled, schedule_time, delay_minutes, task_name }, ctx) => {
     if (platform === 'local' && !video_url) {
       ctx.addIssue({ code: 'custom', message: '本地视频路径不能为空', path: ['video_url'] })
     } else if (!video_url) {
@@ -73,6 +78,36 @@ const formSchema = z
         if (!['http:', 'https:'].includes(url.protocol)) throw new Error()
       } catch {
         ctx.addIssue({ code: 'custom', message: '请输入正确的视频链接', path: ['video_url'] })
+      }
+    }
+
+    // 定时功能验证
+    if (scheduled_enabled) {
+      if (!task_name) {
+        ctx.addIssue({ code: 'custom', message: '请输入任务名称', path: ['task_name'] })
+      }
+
+      // 验证时间设置
+      const hasScheduleTime = schedule_time && schedule_time.trim() !== '';
+      const hasDelayMinutes = delay_minutes !== undefined && delay_minutes > 0;
+
+      if (!hasScheduleTime && !hasDelayMinutes) {
+        ctx.addIssue({ code: 'custom', message: '请选择定时时间或输入延迟分钟数', path: ['schedule_time'] })
+      }
+
+      if (hasScheduleTime && hasDelayMinutes) {
+        ctx.addIssue({ code: 'custom', message: '不能同时设置定时时间和延迟分钟数', path: ['schedule_time'] })
+      }
+
+      if (hasScheduleTime) {
+        const scheduleDate = new Date(schedule_time)
+        if (scheduleDate <= new Date()) {
+          ctx.addIssue({ code: 'custom', message: '定时时间必须大于当前时间', path: ['schedule_time'] })
+        }
+      }
+
+      if (hasDelayMinutes && (delay_minutes <= 0 || delay_minutes > 1440)) {
+        ctx.addIssue({ code: 'custom', message: '延迟分钟数必须在1-1440之间', path: ['delay_minutes'] })
       }
     }
   })
@@ -129,7 +164,7 @@ const NoteForm = () => {
   /* ---- 全局状态 ---- */
   const { addPendingTask, currentTaskId, setCurrentTask, getCurrentTask, retryTask } =
     useTaskStore()
-  const { loadEnabledModels, modelList, showFeatureHint, setShowFeatureHint } = useModelStore()
+  const { loadEnabledModels, modelList } = useModelStore()
 
   /* ---- 表单 ---- */
   const form = useForm<NoteFormValues>({
@@ -142,6 +177,10 @@ const NoteForm = () => {
       video_interval: 4,
       grid_size: [3, 3],
       format: [],
+      scheduled_enabled: false,
+      schedule_time: '',
+      delay_minutes: 30,
+      task_name: '',
     },
   })
   const currentTask = getCurrentTask()
@@ -149,6 +188,7 @@ const NoteForm = () => {
   /* ---- 派生状态（只 watch 一次，提高性能） ---- */
   const platform = useWatch({ control: form.control, name: 'platform' }) as string
   const videoUnderstandingEnabled = useWatch({ control: form.control, name: 'video_understanding' })
+  const scheduledEnabled = useWatch({ control: form.control, name: 'scheduled_enabled' })
   const editing = currentTask && currentTask.id
 
   const goModelAdd = () => {
@@ -160,6 +200,17 @@ const NoteForm = () => {
 
     return
   }, [])
+
+  // 当启用定时功能时，设置默认时间为明天凌晨00:01
+  useEffect(() => {
+    if (scheduledEnabled && !form.getValues('schedule_time') && !form.getValues('delay_minutes')) {
+      const tomorrow = new Date()
+      tomorrow.setDate(tomorrow.getDate() + 1) // 明天
+      tomorrow.setHours(0, 1, 0, 0) // 设置为00:01:00
+      const defaultTime = tomorrow.toISOString().slice(0, 16)
+      form.setValue('schedule_time', defaultTime)
+    }
+  }, [scheduledEnabled, form])
   useEffect(() => {
     if (!currentTask) return
     const { formData } = currentTask
@@ -179,6 +230,10 @@ const NoteForm = () => {
       video_interval: formData.video_interval ?? 4,
       grid_size: formData.grid_size ?? [3, 3],
       format: formData.format ?? [],
+      scheduled_enabled: false,
+      schedule_time: '',
+      delay_minutes: 30,
+      task_name: '',
     })
   }, [
     // 当下面任意一个变了，就重新 reset
@@ -199,10 +254,10 @@ const NoteForm = () => {
     setUploadSuccess(false)
 
     try {
-  
-      const  data  = await uploadFile(formData)
-        cb(data.url)
-        setUploadSuccess(true)
+
+      const data = await uploadFile(formData)
+      cb(data.url)
+      setUploadSuccess(true)
     } catch (err) {
       console.error('上传失败:', err)
       // message.error('上传失败，请重试')
@@ -213,7 +268,67 @@ const NoteForm = () => {
 
   const onSubmit = async (values: NoteFormValues) => {
     console.log('Not even go here')
-    const payload: NoteFormValues = {
+
+    // 如果启用了定时功能，创建定时任务
+    if (values.scheduled_enabled) {
+      try {
+        // 动态导入定时任务服务
+        const { createScheduledTask } = await import('@/services/scheduledTask')
+
+        const scheduledTaskData: any = {
+          task_name: values.task_name!,
+          video_url: values.video_url!,
+          platform: values.platform,
+          quality: values.quality,
+          screenshot: values.screenshot || false,
+          link: values.link || false,
+          model_name: values.model_name,
+          provider_id: modelList.find(m => m.model_name === values.model_name)!.provider_id,
+          format: values.format || [],
+          style: values.style,
+          extras: values.extras,
+          video_understanding: values.video_understanding || false,
+          video_interval: values.video_interval || 4,
+          grid_size: values.grid_size || [3, 3],
+          repeat_type: "once",
+          enabled: true
+        }
+
+        // 根据用户选择设置时间
+        if (values.delay_minutes) {
+          scheduledTaskData.delay_minutes = values.delay_minutes
+        } else if (values.schedule_time) {
+          scheduledTaskData.schedule_time = values.schedule_time
+        }
+
+        await createScheduledTask(scheduledTaskData)
+        message.success('定时任务创建成功！')
+
+        // 重置表单
+        form.reset({
+          platform: 'bilibili',
+          quality: 'medium',
+          model_name: modelList[0]?.model_name || '',
+          style: 'minimal',
+          video_interval: 4,
+          grid_size: [3, 3],
+          format: [],
+          scheduled_enabled: false,
+          schedule_time: '',
+          delay_minutes: 30,
+          task_name: '',
+        })
+
+        return
+      } catch (error) {
+        console.error('定时任务创建失败:', error)
+        message.error('定时任务创建失败')
+        return
+      }
+    }
+
+    // 原有的立即执行逻辑
+    const payload: any = {
       ...values,
       provider_id: modelList.find(m => m.model_name === values.model_name)!.provider_id,
       task_id: currentTaskId || '',
@@ -224,7 +339,7 @@ const NoteForm = () => {
     }
 
     // message.success('已提交任务')
-    const  data  = await generateNote(payload)
+    const data = await generateNote(payload)
     addPendingTask(data.task_id, values.platform, payload)
   }
   const onInvalid = (errors: FieldErrors<NoteFormValues>) => {
@@ -237,7 +352,7 @@ const NoteForm = () => {
     setCurrentTask(null)
   }
   const FormButton = () => {
-    const label = generating ? '正在生成…' : editing ? '重新生成' : '生成笔记'
+    const label = generating ? '正在生成…' : editing ? '重新生成' : scheduledEnabled ? '创建定时任务' : '生成笔记'
 
     return (
       <div className="flex gap-2">
@@ -274,6 +389,7 @@ const NoteForm = () => {
             {/* 平台选择 */}
 
             <FormField
+              className="w-full"
               control={form.control}
               name="platform"
               render={({ field }) => (
@@ -371,49 +487,44 @@ const NoteForm = () => {
           />
           <div className="grid grid-cols-2 gap-2">
             {/* 模型选择 */}
-            {
-
-             modelList.length>0?(     <FormField
-               className="w-full"
-               control={form.control}
-               name="model_name"
-               render={({ field }) => (
-                 <FormItem>
-                   <SectionHeader title="模型选择" tip="不同模型效果不同，建议自行测试" />
-                   <Select
-                     onOpenChange={()=>{
-                       loadEnabledModels()
-                     }}
-                     value={field.value}
-                     onValueChange={field.onChange}
-                     defaultValue={field.value}
-                   >
-                     <FormControl>
-                       <SelectTrigger className="w-full min-w-0 truncate">
-                         <SelectValue />
-                       </SelectTrigger>
-                     </FormControl>
-                     <SelectContent>
-                       {modelList.map(m => (
-                         <SelectItem key={m.id} value={m.model_name}>
-                           {m.model_name}
-                         </SelectItem>
-                       ))}
-                     </SelectContent>
-                   </Select>
-                   <FormMessage />
-                 </FormItem>
-               )}
-             />): (
-               <FormItem>
-                 <SectionHeader title="模型选择" tip="不同模型效果不同，建议自行测试" />
-                  <Button type={'button'} variant={
-                    'outline'
-                  } onClick={()=>{goModelAdd()}}>请先添加模型</Button>
-                 <FormMessage />
-               </FormItem>
-             )
-            }
+            <FormField
+              className="w-full"
+              control={form.control}
+              name="model_name"
+              render={({ field }) => (
+                <FormItem>
+                  <SectionHeader title="模型选择" tip="不同模型效果不同，建议自行测试" />
+                  {modelList.length > 0 ? (
+                    <Select
+                      onOpenChange={() => {
+                        fetchModels()
+                      }}
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full min-w-0 truncate">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {modelList.map(m => (
+                          <SelectItem key={m.id} value={m.model_name}>
+                            {m.model_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={goModelAdd}>
+                      请先添加模型
+                    </Button>
+                  )}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             {/* 笔记风格 */}
             <FormField
@@ -540,6 +651,104 @@ const NoteForm = () => {
               </FormItem>
             )}
           />
+
+          {/* 定时功能 */}
+          <SectionHeader title="定时功能" tip="开启后将在指定时间自动生成笔记" />
+          <div className="flex flex-col gap-4">
+            <FormField
+              control={form.control}
+              name="scheduled_enabled"
+              render={({ field }) => (
+                <FormItem>
+                  <div className="flex items-center gap-2">
+                    <FormLabel>启用定时</FormLabel>
+                    <Checkbox
+                      checked={scheduledEnabled}
+                      onCheckedChange={v => form.setValue('scheduled_enabled', v)}
+                    />
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {scheduledEnabled && (
+              <div className="grid grid-cols-1 gap-4">
+                <FormField
+                  control={form.control}
+                  name="task_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>任务名称</FormLabel>
+                      <Input placeholder="请输入任务名称" {...field} />
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="delay_minutes"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>延迟分钟数</FormLabel>
+                        <Input
+                          type="number"
+                          placeholder="例如：30"
+                          min={1}
+                          max={1440}
+                          {...field}
+                          onChange={e => {
+                            field.onChange(e.target.value ? Number(e.target.value) : undefined)
+                            if (e.target.value) {
+                              form.setValue('schedule_time', '')
+                            }
+                          }}
+                        />
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="schedule_time"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>具体日期时间</FormLabel>
+                        <Input
+                          type="datetime-local"
+                          {...field}
+                          min={new Date().toISOString().slice(0, 16)}
+                          onChange={e => {
+                            field.onChange(e.target.value)
+                            if (e.target.value) {
+                              form.setValue('delay_minutes', undefined)
+                            }
+                          }}
+                        />
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+            )}
+
+            {scheduledEnabled && (
+              <Alert
+                type="info"
+                message={
+                  <div>
+                    <strong>定时说明：</strong>
+                    <p>定时开启后，视频将在指定时间自动生成笔记，而不是立即生成。默认定时时间为明天凌晨00:01。</p>
+                  </div>
+                }
+                className="text-sm"
+              />
+            )}
+          </div>
 
           {/* 备注 */}
           <FormField

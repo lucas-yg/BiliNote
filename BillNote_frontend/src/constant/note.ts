@@ -5,6 +5,7 @@ import {
   KuaishouLogo,
   LocalLogo,
   YoutubeLogo,
+  WechatLogo,
 } from '@/components/Icons/platform.tsx'
 
 export const noteFormats = [
@@ -31,5 +32,6 @@ export const videoPlatforms = [
   { label: 'YouTube', value: 'youtube', logo: YoutubeLogo },
   { label: '抖音', value: 'douyin', logo: DouyinLogo },
   { label: '快手', value: 'kuaishou', logo: KuaishouLogo },
+  { label: '直链视频 (MP4等)', value: 'wechat', logo: WechatLogo },
   { label: '本地视频', value: 'local', logo: LocalLogo },
 ] as const

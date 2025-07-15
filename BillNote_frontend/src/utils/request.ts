@@ -14,7 +14,7 @@ export interface IResponse<T = any> {
 const baseURL = import.meta.env.VITE_API_BASE_URL;
 
 // 创建实例
- const request: AxiosInstance = axios.create({
+export const request: AxiosInstance = axios.create({
   baseURL: baseURL || '/api',
   timeout: 10000,
 });
@@ -46,7 +46,7 @@ request.interceptors.response.use(
     } else {
       // 没有响应数据（如网络中断），显示通用网络错误
       // No response data (e.g., network disconnected), display generic network error
-      toast.error( '请求失败，请检查网络连接或稍后再试')
+      toast.error('请求失败，请检查网络连接或稍后再试')
       return Promise.reject({
         code: -1,
         msg: '请求失败，请检查网络连接',

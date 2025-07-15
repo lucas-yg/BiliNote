@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+RUN rm -f /etc/apt/sources.list && \
+    rm -rf /etc/apt/sources.list.d/* && \
+    echo "deb https://mirrors.aliyun.com/debian/ bookworm main non-free contrib" > /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian/ bookworm-updates main non-free contrib" >> /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian/ bookworm-backports main non-free contrib" >> /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian-security bookworm-security main non-free contrib" >> /etc/apt/sources.list && \
+    apt-get clean && \
+    apt-get update && \
+    apt-get install -y ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+# 确保 PATH 中包含 ffmpeg 路径（可选）
+ENV PATH="/usr/bin:${PATH}"
+
+# 设置 Hugging Face 镜像源环境变量
+ENV HF_ENDPOINT=https://hf-mirror.com
+
+WORKDIR /app
+COPY ./backend /app
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com && \
+    pip install --no-cache-dir -r requirements.txt
+
+CMD ["python", "main.py"]
