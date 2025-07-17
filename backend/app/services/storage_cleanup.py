@@ -20,6 +20,13 @@ class StorageCleanupService:
         self.uploads_path = self.base_path / "uploads"
         self.data_path = self.base_path / "data"
         self.note_results_path = self.base_path / "note_results"
+        self.static_path = self.base_path / "static"
+        
+        # 支持的音视频文件扩展名
+        self.media_extensions = [
+            ".mp4", ".avi", ".mkv", ".mov", ".flv", ".webm", ".wmv",
+            ".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a", ".wma"
+        ]
         
         # 默认保留策略（天数）
         self.default_retention = {
@@ -44,10 +51,20 @@ class StorageCleanupService:
             # 清理任务相关的临时文件
             self._cleanup_task_files(task_id, keep_uploads, uploaded_filename, video_path)
             
+            # 额外清理所有可能遗留的音视频文件
+            self.cleanup_all_media_files()
+            
             logger.info(f"任务 {task_id} 的临时文件已清理")
             
         except Exception as e:
             logger.error(f"清理任务 {task_id} 文件时出错: {e}")
+            # 尝试再次清理
+            try:
+                logger.info("尝试再次清理...")
+                self._cleanup_task_files(task_id, keep_uploads, uploaded_filename, video_path)
+                self.cleanup_all_media_files()
+            except Exception as retry_error:
+                logger.error(f"重试清理失败: {retry_error}")
     
     def _cleanup_task_files(self, task_id: str, keep_uploads: bool, uploaded_filename: str = None, video_path: Optional[Path] = None):
         """清理特定任务的文件"""
@@ -109,7 +126,7 @@ class StorageCleanupService:
         
         # 清理任务相关的其他视频文件（可能在根目录或其他位置）
         root_path = self.base_path
-        for ext in [".mp4", ".avi", ".mkv", ".mov", ".flv", ".webm", ".wav", ".mp3", ".m4a"]:
+        for ext in self.media_extensions:
             for file_path in root_path.glob(f"*{task_id}*{ext}"):
                 try:
                     if file_path.is_file():
@@ -117,6 +134,13 @@ class StorageCleanupService:
                         logger.info(f"已删除视频/音频文件: {file_path}")
                 except Exception as e:
                     logger.warning(f"删除视频/音频文件 {file_path} 失败: {e}")
+                    # 尝试强制删除
+                    try:
+                        import os
+                        os.remove(str(file_path))
+                        logger.info(f"强制删除视频/音频文件成功: {file_path}")
+                    except Exception as force_error:
+                        logger.error(f"强制删除失败: {force_error}")
     
     def cleanup_old_files(self, custom_retention: Optional[dict] = None):
         """
@@ -263,6 +287,125 @@ class StorageCleanupService:
             return self.cleanup_old_files(aggressive_retention)
         
         return None
+    
+    def cleanup_all_media_files(self, max_age_hours: int = 24):
+        """
+        清理所有音视频文件，不依赖于task_id
+        
+        Args:
+            max_age_hours: 文件最大保留时间（小时），默认24小时
+        """
+        logger.info(f"开始清理所有音视频文件（保留最近{max_age_hours}小时的文件）")
+        
+        # 计算截止时间
+        cutoff_time = time.time() - (max_age_hours * 60 * 60)
+        
+        # 需要检查的目录列表
+        directories_to_check = [
+            self.base_path,          # 项目根目录
+            self.uploads_path,       # 上传目录
+            self.data_path,          # 数据目录
+            self.note_results_path,  # 笔记结果目录
+            self.static_path,        # 静态文件目录
+        ]
+        
+        # 添加data子目录
+        for subdir in ["data", "output_frames", "grid_output"]:
+            dir_path = self.data_path / subdir
+            if dir_path.exists():
+                directories_to_check.append(dir_path)
+        
+        # 清理每个目录中的音视频文件
+        total_deleted = 0
+        total_failed = 0
+        
+        # 导入需要的模块
+        import os
+        import subprocess
+        import glob
+        
+        for directory in directories_to_check:
+            if not directory.exists():
+                continue
+                
+            logger.info(f"检查目录: {directory}")
+            
+            # 对每个目录中的每种扩展名文件进行处理
+            for ext in self.media_extensions:
+                # 同时查找大写和小写扩展名
+                ext_lower = ext.lower()
+                ext_upper = ext.upper()
+                
+                # 构建文件路径模式
+                file_patterns = []
+                for file_pattern in [f"*{ext_lower}", f"*{ext_upper}"]:
+                    # 查找匹配的文件
+                    for file_path in directory.glob(file_pattern):
+                        if file_path.is_file():
+                            # 检查文件修改时间
+                            if max_age_hours == 0 or file_path.stat().st_mtime < cutoff_time:
+                                file_patterns.append(str(file_path))
+                
+                # 如果找到了匹配的文件
+                if file_patterns:
+                    try:
+                        # 对每个文件单独处理
+                        for file_path in file_patterns:
+                            try:
+                                # 1. 先清除扩展属性
+                                subprocess.run(['xattr', '-c', file_path], check=False)
+                                
+                                # 2. 然后删除文件
+                                subprocess.run(['rm', '-f', file_path], check=False)
+                                
+                                logger.info(f"已删除音视频文件: {file_path}")
+                                total_deleted += 1
+                            except Exception as e:
+                                logger.error(f"删除文件 {file_path} 失败: {e}")
+                                total_failed += 1
+                    except Exception as e:
+                        logger.error(f"处理 {ext} 文件时出错: {e}")
+                        total_failed += 1
+            
+            # 使用find命令进行备用清理（更可靠但可能不支持某些系统）
+            try:
+                # 构建扩展名模式
+                ext_patterns = []
+                for ext in self.media_extensions:
+                    ext_patterns.append(f"-name '*{ext.lower()}'")
+                    ext_patterns.append(f"-name '*{ext.upper()}'")
+                
+                # 组合所有扩展名，用 -o (OR) 连接
+                ext_pattern_str = " -o ".join(ext_patterns)
+                
+                # 构建完整的find命令
+                if max_age_hours == 0:
+                    # 强制删除所有媒体文件，不考虑文件年龄
+                    find_cmd = f"find {directory} -type f \\( {ext_pattern_str} \\) -exec xattr -c {{}} \\; -exec rm -f {{}} \\;"
+                else:
+                    # 根据文件年龄删除
+                    find_cmd = f"find {directory} -type f \\( {ext_pattern_str} \\) -mtime +{max_age_hours/24} -exec xattr -c {{}} \\; -exec rm -f {{}} \\;"
+                
+                # 执行命令
+                result = subprocess.run(find_cmd, shell=True, check=False)
+                
+                if result.returncode == 0:
+                    logger.info(f"使用find命令清理了目录 {directory} 中的媒体文件")
+            except Exception as e:
+                logger.error(f"使用find命令清理失败: {e}")
+        
+        logger.info(f"音视频文件清理完成: 成功删除 {total_deleted} 个文件, 失败 {total_failed} 个文件")
+        return {"deleted": total_deleted, "failed": total_failed}
+        
+        logger.info(f"音视频文件清理完成: 成功删除 {total_deleted} 个文件, 失败 {total_failed} 个文件")
+        return {"deleted": total_deleted, "failed": total_failed}
+    
+    def force_cleanup_all_media_files(self):
+        """
+        强制清理所有音视频文件，不考虑文件年龄
+        """
+        logger.info("开始强制清理所有音视频文件（不考虑文件年龄）")
+        return self.cleanup_all_media_files(max_age_hours=0)
 
 # 全局实例
 storage_cleanup = StorageCleanupService()

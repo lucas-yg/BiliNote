@@ -199,7 +199,7 @@ class NoteGenerator:
                 try:
                     # 提取上传文件名用于清理
                     uploaded_filename = None
-                    if platform == "local" and video_url.startswith('/uploads'):
+                    if platform == "local" and isinstance(video_url, str) and video_url.startswith('/uploads'):
                         uploaded_filename = os.path.basename(video_url)
                         logger.info(f"检测到上传文件: {uploaded_filename}")
                     
@@ -210,9 +210,18 @@ class NoteGenerator:
                         uploaded_filename=uploaded_filename,
                         video_path=self.video_path  # 传递下载的视频路径
                     )
+                    
+                    # 额外调用全面清理，确保没有遗漏的音视频文件
+                    logger.info("执行额外的全面清理...")
+                    storage_cleanup.cleanup_all_media_files()
                 except Exception as cleanup_error:
                     logger.error(f"清理任务 {task_id} 文件时出错: {cleanup_error}")
-                    # 清理失败不影响主流程
+                    # 清理失败不影响主流程，但仍尝试强制清理
+                    try:
+                        logger.info("尝试强制清理所有音视频文件...")
+                        storage_cleanup.force_cleanup_all_media_files()
+                    except Exception as force_error:
+                        logger.error(f"强制清理失败: {force_error}")
                 
                 # 确保清理视频文件（即使cleanup_after_processing失败）
                 if hasattr(self, 'video_path') and self.video_path and self.video_path.exists():
@@ -221,6 +230,12 @@ class NoteGenerator:
                         os.unlink(self.video_path)
                     except Exception as e:
                         logger.error(f"强制删除视频文件失败: {e}")
+                        # 尝试使用os.remove作为备选方案
+                        try:
+                            os.remove(str(self.video_path))
+                            logger.info(f"使用os.remove成功删除视频文件: {self.video_path}")
+                        except Exception as remove_error:
+                            logger.error(f"使用os.remove删除失败: {remove_error}")
 
     @staticmethod
     def delete_note(video_id: str, platform: str) -> int:

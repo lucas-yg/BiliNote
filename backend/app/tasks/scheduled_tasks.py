@@ -5,6 +5,7 @@ from celery.utils.log import get_task_logger
 
 from app.db.scheduled_task_dao import ScheduledTaskDAO
 from app.services.note import NoteGenerator
+from app.services.storage_cleanup import storage_cleanup
 from app.enmus.note_enums import DownloadQuality
 
 logger = get_task_logger(__name__)
@@ -121,3 +122,43 @@ def execute_scheduled_task(self, scheduled_task_id: int):
         else:
             logger.error(f"定时任务 {scheduled_task_id} 重试次数用尽，最终失败")
             return f"定时任务 {scheduled_task_id} 执行失败: {str(e)}"
+
+
+@celery_app.task(bind=True)
+def cleanup_media_files(self, max_age_hours: int = 24):
+    """
+    定期清理所有音视频文件
+    
+    Args:
+        max_age_hours: 文件最大保留时间（小时），默认24小时
+    """
+    try:
+        logger.info(f"开始定期清理音视频文件（保留最近{max_age_hours}小时的文件）")
+        result = storage_cleanup.cleanup_all_media_files(max_age_hours=max_age_hours)
+        logger.info(f"定期清理完成: 成功删除 {result.get('deleted', 0)} 个文件, 失败 {result.get('failed', 0)} 个文件")
+        return f"清理完成: 删除 {result.get('deleted', 0)} 个文件"
+    except Exception as e:
+        logger.error(f"定期清理音视频文件失败: {str(e)}")
+        self.retry(countdown=60, exc=e)
+
+
+@celery_app.task
+def emergency_cleanup(max_size_mb: int = 1000):
+    """
+    紧急清理：当存储超过指定大小时强制清理
+    
+    Args:
+        max_size_mb: 最大存储大小（MB），默认1000MB
+    """
+    try:
+        logger.info(f"开始紧急清理（阈值: {max_size_mb}MB）")
+        result = storage_cleanup.emergency_cleanup(max_size_mb=max_size_mb)
+        if result:
+            logger.info(f"紧急清理完成: {result}")
+            return f"紧急清理完成"
+        else:
+            logger.info(f"存储空间未超过阈值，无需紧急清理")
+            return "无需紧急清理"
+    except Exception as e:
+        logger.error(f"紧急清理失败: {str(e)}")
+        return f"紧急清理失败: {str(e)}"

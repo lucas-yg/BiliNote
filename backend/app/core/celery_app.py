@@ -13,7 +13,7 @@ celery_app = Celery(
     "bilinote",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["app.tasks.scheduled_tasks", "app.tasks.video_tasks"]
+    include=["app.tasks.scheduled_tasks"]
 )
 
 # Celery配置
@@ -32,7 +32,6 @@ celery_app.conf.update(
     
     # 任务路由
     task_routes={
-        "app.tasks.video_tasks.parse_video_task": {"queue": "video_parsing"},
         "app.tasks.scheduled_tasks.execute_scheduled_task": {"queue": "scheduled"},
     },
     
@@ -50,6 +49,16 @@ celery_app.conf.update(
         "check-scheduled-tasks": {
             "task": "app.tasks.scheduled_tasks.check_and_execute_scheduled_tasks",
             "schedule": 60.0,  # 每60秒检查一次
+        },
+        "daily-media-cleanup": {
+            "task": "app.tasks.scheduled_tasks.cleanup_media_files",
+            "schedule": crontab(hour=3, minute=0),  # 每天凌晨3点执行
+            "args": (24,)  # 清理24小时前的文件
+        },
+        "hourly-storage-check": {
+            "task": "app.tasks.scheduled_tasks.emergency_cleanup",
+            "schedule": crontab(minute=15),  # 每小时的第15分钟执行
+            "args": (1000,)  # 当存储空间超过1000MB时进行清理
         },
     },
 )

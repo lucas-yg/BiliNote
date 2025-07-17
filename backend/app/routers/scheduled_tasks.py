@@ -1,11 +1,13 @@
 from datetime import datetime, timedelta
 from typing import List, Optional, Union
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, field_validator, model_validator
 
 from app.db.scheduled_task_dao import ScheduledTaskDAO
 from app.utils.response import ResponseWrapper as R
 from app.enmus.note_enums import DownloadQuality
+from app.tasks.scheduled_tasks import cleanup_media_files, emergency_cleanup
+from app.services.storage_cleanup import storage_cleanup
 
 router = APIRouter()
 
@@ -21,7 +23,7 @@ class ScheduledTaskRequest(BaseModel):
     enabled: bool = True
     
     # 笔记生成配置
-    quality: DownloadQuality = DownloadQuality.MEDIUM
+    quality: DownloadQuality = DownloadQuality.medium
     screenshot: bool = False
     link: bool = False
     model_name: str
@@ -262,5 +264,73 @@ def delete_scheduled_task(task_id: int):
         
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CleanupRequest(BaseModel):
+    """清理音视频文件请求"""
+    max_age_hours: int = 24
+
+
+class EmergencyCleanupRequest(BaseModel):
+    """紧急清理请求"""
+    max_size_mb: int = 1000
+
+
+@router.post("/cleanup_media_files")
+def trigger_cleanup_media_files(data: CleanupRequest, background_tasks: BackgroundTasks):
+    """手动触发清理所有音视频文件"""
+    try:
+        # 立即执行一次清理
+        result = storage_cleanup.cleanup_all_media_files(max_age_hours=data.max_age_hours)
+        
+        # 在后台任务中再次执行，确保彻底清理
+        background_tasks.add_task(cleanup_media_files.delay, data.max_age_hours)
+        
+        return R.success({
+            "deleted": result.get("deleted", 0),
+            "failed": result.get("failed", 0),
+            "max_age_hours": data.max_age_hours
+        }, msg=f"清理完成，已删除 {result.get('deleted', 0)} 个文件，后台任务已启动")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/emergency_cleanup")
+def trigger_emergency_cleanup(data: EmergencyCleanupRequest, background_tasks: BackgroundTasks):
+    """手动触发紧急清理"""
+    try:
+        # 立即执行一次紧急清理
+        result = storage_cleanup.emergency_cleanup(max_size_mb=data.max_size_mb)
+        
+        # 在后台任务中再次执行，确保彻底清理
+        background_tasks.add_task(emergency_cleanup.delay, data.max_size_mb)
+        
+        if result:
+            return R.success(result, msg="紧急清理完成，后台任务已启动")
+        else:
+            return R.success(msg="存储空间未超过阈值，无需紧急清理")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/force_cleanup_all_media")
+def force_cleanup_all_media(background_tasks: BackgroundTasks):
+    """强制清理所有音视频文件（不考虑文件年龄）"""
+    try:
+        # 立即执行一次强制清理
+        result = storage_cleanup.force_cleanup_all_media_files()
+        
+        # 在后台任务中再次执行，确保彻底清理
+        background_tasks.add_task(cleanup_media_files.delay, 0)
+        
+        return R.success({
+            "deleted": result.get("deleted", 0),
+            "failed": result.get("failed", 0)
+        }, msg=f"强制清理完成，已删除 {result.get('deleted', 0)} 个文件，后台任务已启动")
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

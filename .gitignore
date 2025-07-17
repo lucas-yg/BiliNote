@@ -400,3 +400,5 @@ BillNote_frontend/src-tauri/bin/
 
 # Additional frontend cache
 BillNote_frontend/.eslintcache
+
+local.sh

@@ -112,21 +112,40 @@ def run_note_task(task_id: str, video_url: str, platform: str, quality: Download
         # 无论成功还是失败，都清理与此任务相关的视频文件
         logger.info(f"开始清理任务 {task_id} 相关的视频文件")
         try:
+            # 清理任务相关文件
             storage_cleanup.cleanup_after_processing(task_id, keep_uploads=False)
+            
+            # 额外调用全面清理，确保没有遗漏的音视频文件
+            logger.info("执行额外的全面清理...")
+            storage_cleanup.cleanup_all_media_files()
         except Exception as cleanup_error:
             logger.error(f"清理任务 {task_id} 文件时出错: {cleanup_error}")
-            # 清理失败不影响主流程
+            # 清理失败不影响主流程，但仍尝试强制清理
+            try:
+                logger.info("尝试强制清理所有音视频文件...")
+                storage_cleanup.force_cleanup_all_media_files()
+            except Exception as force_error:
+                logger.error(f"强制清理失败: {force_error}")
 
 
 
 @router.post('/delete_task')
 def delete_task(data: RecordRequest):
     try:
-        # TODO: 待持久化完成
-        # NoteGenerator().delete_note(video_id=data.video_id, platform=data.platform)
-        return R.success(msg='删除成功')
+        # 删除数据库记录
+        deleted_count = NoteGenerator().delete_note(video_id=data.video_id, platform=data.platform)
+        
+        # 清理相关文件
+        try:
+            logger.info(f"执行额外的全面清理...")
+            storage_cleanup.cleanup_all_media_files()
+        except Exception as cleanup_error:
+            logger.error(f"清理文件时出错: {cleanup_error}")
+        
+        return R.success(msg=f'删除成功，共删除 {deleted_count} 条记录')
     except Exception as e:
-        return R.error(msg=e)
+        logger.error(f"删除任务失败: {e}")
+        return R.error(msg=str(e))
 
 
 @router.post("/upload")
