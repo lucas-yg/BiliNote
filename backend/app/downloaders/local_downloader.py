@@ -127,13 +127,15 @@ class LocalDownloader(Downloader, ABC):
         """
         处理本地文件路径，返回视频文件路径
         """
+        original_url = video_url
+        
         if video_url.startswith('/uploads'):
             project_root = os.getcwd()
             video_url = os.path.join(project_root, video_url.lstrip('/'))
             video_url = os.path.normpath(video_url)
 
         if not os.path.exists(video_url):
-            raise FileNotFoundError()
+            raise FileNotFoundError(f"本地文件不存在: {video_url} (原始路径: {original_url})")
         return video_url
     def download(
             self,

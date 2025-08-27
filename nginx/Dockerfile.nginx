@@ -1,0 +1,10 @@
+FROM nginx:1.25-alpine
+
+# Remove the default configuration
+RUN rm -f /etc/nginx/conf.d/default.conf
+
+# Copy our custom configuration
+COPY default.conf /etc/nginx/conf.d/default.conf
+
+# Ensure the configuration is readable
+RUN chmod 644 /etc/nginx/conf.d/default.conf

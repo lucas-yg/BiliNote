@@ -25,6 +25,6 @@ ENV HTTPS_PROXY=""
 
 WORKDIR /app
 COPY ./backend /app
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --proxy "" -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
 
 CMD ["python", "main.py"]

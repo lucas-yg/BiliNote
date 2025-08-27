@@ -332,12 +332,18 @@ class NoteGenerator:
 
     def _handle_exception(self, task_id, exc):
         logger.error(f"任务异常 (task_id={task_id})", exc_info=True)
-        error_message = getattr(exc, 'detail', str(exc))
-        if isinstance(error_message, dict):
-            try:
-                error_message = json.dumps(error_message, ensure_ascii=False)
-            except:
-                error_message = str(error_message)
+        
+        # 为常见错误提供更友好的错误信息
+        if isinstance(exc, FileNotFoundError):
+            error_message = f"文件不存在: {str(exc)}。请检查文件路径是否正确，文件是否已被移动或删除。"
+        else:
+            error_message = getattr(exc, 'detail', str(exc))
+            if isinstance(error_message, dict):
+                try:
+                    error_message = json.dumps(error_message, ensure_ascii=False)
+                except:
+                    error_message = str(error_message)
+        
         self._update_status(task_id, TaskStatus.FAILED, message=error_message)
 
     def _download_media(
