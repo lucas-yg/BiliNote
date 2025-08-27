@@ -1,5 +1,7 @@
 from app.gpt.prompt import BASE_PROMPT
 from app.gpt.tutorial_prompts import TUTORIAL_STYLES
+from app.gpt.minimal_prompts import MINIMAL_STYLES
+from app.gpt.detailed_prompts import DETAILED_STYLES
 
 note_formats = [
     {'label': '目录', 'value': 'toc'},
@@ -42,7 +44,31 @@ def generate_base_prompt(title, segment_text, tags, _format=None, style=None, ex
         
         return prompt
     
-    # 原有的备注优先级逻辑（非教程风格时使用）
+    # 特殊处理精简风格 - 直接使用精简提取模板，忽略其他格式
+    if style == 'minimal':
+        minimal_prompt = MINIMAL_STYLES.get('content_extraction', '')
+        prompt += f"\n\n**精简内容提取任务（最高优先级）：**\n{minimal_prompt}\n"
+        prompt += "\n请严格按照上述精简提取要求执行，专注于核心信息提炼和整理。\n"
+        
+        # 如果有用户自定义备注，作为补充
+        if extras and extras.strip():
+            prompt += f"\n**用户补充要求：**\n{extras}\n"
+        
+        return prompt
+    
+    # 特殊处理详细风格 - 直接使用详细分析模板，忽略其他格式
+    if style == 'detailed':
+        detailed_prompt = DETAILED_STYLES.get('content_extraction', '')
+        prompt += f"\n\n**详细内容分析任务（最高优先级）：**\n{detailed_prompt}\n"
+        prompt += "\n请严格按照上述详细分析要求执行，专注于全面深入的信息整理。\n"
+        
+        # 如果有用户自定义备注，作为补充
+        if extras and extras.strip():
+            prompt += f"\n**用户补充要求：**\n{extras}\n"
+        
+        return prompt
+    
+    # 原有的备注优先级逻辑（非特殊风格时使用）
     if extras and extras.strip():
         # 将用户备注提升为最重要的任务指令
         prompt += f"\n\n**用户特定要求（最高优先级）：**\n{extras}\n"
@@ -82,8 +108,6 @@ def get_format_function(format_type):
 # 风格描述的处理
 def get_style_format(style):
     style_map = {
-        'minimal': '1. **精简信息**: 仅记录最重要的内容，简洁明了。',
-        'detailed': '2. **详细记录**: 包含完整的内容和每个部分的详细讨论。需要尽可能多的记录视频内容，最好详细的笔记',
         'academic': '3. **学术风格**: 适合学术报告，正式且结构化。',
         'xiaohongshu': '''4. **小红书风格**: 
 ### 擅长使用下面的爆款关键词：
