@@ -1,4 +1,5 @@
 from app.gpt.prompt import BASE_PROMPT
+from app.gpt.tutorial_prompts import TUTORIAL_STYLES
 
 note_formats = [
     {'label': '目录', 'value': 'toc'},
@@ -11,7 +12,7 @@ note_styles = [
     {'label': '精简', 'value': 'minimal'},
     {'label': '详细', 'value': 'detailed'},
     {'label': '学术', 'value': 'academic'},
-    {"label": '教程',"value": 'tutorial', },
+    {"label": '编程教程',"value": 'tutorial', },
     {'label': '小红书', 'value': 'xiaohongshu'},
     {'label': '生活向', 'value': 'life_journal'},
     {'label': '任务导向', 'value': 'task_oriented'},
@@ -29,17 +30,41 @@ def generate_base_prompt(title, segment_text, tags, _format=None, style=None, ex
         tags=tags
     )
 
-    # 添加用户选择的格式
+    # 特殊处理教程风格 - 直接使用代码提取模板，忽略其他格式
+    if style == 'tutorial':
+        tutorial_prompt = TUTORIAL_STYLES.get('code_extraction', '')
+        prompt += f"\n\n**教程代码提取任务（最高优先级）：**\n{tutorial_prompt}\n"
+        prompt += "\n请严格按照上述教程提取要求执行，专注于代码提取和整理。\n"
+        
+        # 如果有用户自定义备注，作为补充
+        if extras and extras.strip():
+            prompt += f"\n**用户补充要求：**\n{extras}\n"
+        
+        return prompt
+    
+    # 原有的备注优先级逻辑（非教程风格时使用）
+    if extras and extras.strip():
+        # 将用户备注提升为最重要的任务指令
+        prompt += f"\n\n**用户特定要求（最高优先级）：**\n{extras}\n"
+        prompt += "\n请严格按照上述用户要求执行，如与默认格式冲突，以用户要求为准。\n"
+
+    # 添加用户选择的格式（如果没有备注内容，或者备注内容较短）
     if _format:
-        prompt += "\n" + "\n".join([get_format_function(f) for f in _format])
+        format_instructions = "\n" + "\n".join([get_format_function(f) for f in _format])
+        if not extras or len(extras.strip()) < 100:  # 如果备注内容较短，仍然添加格式指令
+            prompt += format_instructions
+        else:
+            # 备注内容较长时，将格式指令作为补充说明
+            prompt += f"\n\n**补充格式要求：**{format_instructions}"
 
     # 根据用户选择的笔记风格添加描述
     if style:
-        prompt += "\n" + get_style_format(style)
-
-    # 添加额外内容
-    if extras:
-        prompt += f"\n{extras}"
+        style_instruction = get_style_format(style)
+        if not extras or len(extras.strip()) < 100:
+            prompt += "\n" + style_instruction
+        else:
+            prompt += f"\n\n**风格参考：**\n{style_instruction}"
+    
     return prompt
 
 
@@ -82,7 +107,7 @@ def get_style_format(style):
         'task_oriented': '6. **任务导向**: 强调任务、目标，适合工作和待办事项。',
         'business': '7. **商业风格**: 适合商业报告、会议纪要，正式且精准。',
         'meeting_minutes': '8. **会议纪要**: 适合商业报告、会议纪要，正式且精准。',
-        "tutorial":"9.**教程笔记**:尽可能详细的记录教程,特别是关键点和一些重要的结论步骤"
+        "tutorial": TUTORIAL_STYLES.get('code_extraction', '9.**教程笔记**:尽可能详细的记录教程,特别是关键点和一些重要的结论步骤')
     }
     return style_map.get(style, '')
 

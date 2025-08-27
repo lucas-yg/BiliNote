@@ -3,15 +3,15 @@ services:
     container_name: bilinote-backend
     build:
       context: .
-      dockerfile: backend/Dockerfile.china # 使用国内镜像源的Dockerfile
+      dockerfile: backend/Dockerfile.china 
       args:
         - HTTP_PROXY=http://host.docker.internal:7890
         - HTTPS_PROXY=http://host.docker.internal:7890
     env_file:
       - .env
     dns:
-      - 223.5.5.5  # 阿里云公共DNS
-      - 119.29.29.29  # 腾讯云公共DNS
+      - 223.5.5.5 
+      - 119.29.29.29  
     environment:
       - BACKEND_PORT=${BACKEND_PORT}
       - BACKEND_HOST=${BACKEND_HOST}
@@ -32,7 +32,7 @@ services:
 
   nginx:
     container_name: bilinote-nginx
-    image: nginx:1.25-alpine # 使用官方镜像
+    image: nginx:1.25-alpine 
     ports:
       - '${APP_PORT}:80'
     volumes:

@@ -44,24 +44,99 @@ class VideoReader:
         return float('inf')
 
     def extract_frames(self, max_frames=1000) -> list[str]:
-
         try:
+            from app.utils.video_repair import VideoRepairTool
+            
             os.makedirs(self.frame_dir, exist_ok=True)
-            duration = float(ffmpeg.probe(self.video_path)["format"]["duration"])
-            timestamps = [i for i in range(0, int(duration), self.frame_interval)][:max_frames]
+            
+            # 使用增强的视频处理工具获取时长
+            with VideoRepairTool() as repair_tool:
+                duration = repair_tool.get_video_duration(self.video_path)
+                if duration is None:
+                    logger.warning("无法获取视频时长，使用默认参数")
+                    duration = 60  # 默认60秒
+                
+                timestamps = [i for i in range(0, int(duration), self.frame_interval)][:max_frames]
+                logger.info(f"准备提取 {len(timestamps)} 帧，视频时长: {duration}秒")
 
-            image_paths = []
-            for ts in timestamps:
-                time_label = self.format_time(ts)
-                output_path = os.path.join(self.frame_dir, f"frame_{time_label}.jpg")
-                cmd = ["ffmpeg", "-ss", str(ts), "-i", self.video_path, "-frames:v", "1", "-q:v", "2", "-y", output_path,
-                       "-hide_banner", "-loglevel", "error"]
-                subprocess.run(cmd, check=True)
-                image_paths.append(output_path)
-            return image_paths
+                image_paths = []
+                for ts in timestamps:
+                    time_label = self.format_time(ts)
+                    output_path = os.path.join(self.frame_dir, f"frame_{time_label}.jpg")
+                    
+                    # 使用增强的ffmpeg命令
+                    cmd = [
+                        "ffmpeg",
+                        "-err_detect", "ignore_err",        # 忽略解码错误
+                        "-fflags", "+discardcorrupt",       # 丢弃损坏的包
+                        "-ss", str(ts),
+                        "-i", self.video_path,
+                        "-frames:v", "1",
+                        "-q:v", "2",
+                        "-avoid_negative_ts", "make_zero",  # 避免负时间戳
+                        "-y", output_path,
+                        "-hide_banner", "-loglevel", "warning"  # 减少日志噪音
+                    ]
+                    
+                    try:
+                        result = subprocess.run(
+                            cmd, 
+                            capture_output=True, 
+                            text=True, 
+                            timeout=30,
+                            check=False  # 不要自动抛出异常
+                        )
+                        
+                        if result.returncode != 0:
+                            logger.warning(f"帧提取失败 (时间: {ts}s): {result.stderr}")
+                            # 尝试备用参数
+                            fallback_cmd = [
+                                "ffmpeg",
+                                "-err_detect", "ignore_err",
+                                "-fflags", "+discardcorrupt+igndts",
+                                "-ss", str(max(0, ts - 1)),  # 稍微提前
+                                "-i", self.video_path,
+                                "-frames:v", "1",
+                                "-vf", "scale=640:-1",      # 缩放
+                                "-q:v", "5",                # 降低质量
+                                "-y", output_path,
+                                "-hide_banner", "-loglevel", "error"
+                            ]
+                            
+                            fallback_result = subprocess.run(
+                                fallback_cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=30,
+                                check=False
+                            )
+                            
+                            if fallback_result.returncode != 0:
+                                logger.error(f"备用帧提取也失败 (时间: {ts}s)")
+                                continue  # 跳过这一帧
+                        
+                        # 检查文件是否成功创建
+                        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                            image_paths.append(output_path)
+                        else:
+                            logger.warning(f"帧文件未创建或为空: {output_path}")
+                            
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"帧提取超时 (时间: {ts}s)")
+                        continue
+                    except Exception as e:
+                        logger.error(f"帧提取异常 (时间: {ts}s): {e}")
+                        continue
+
+                if not image_paths:
+                    raise ValueError("未能提取任何有效帧")
+                
+                logger.info(f"成功提取 {len(image_paths)} 帧")
+                return image_paths
+                
         except Exception as e:
             logger.error(f"分割帧发生错误：{str(e)}")
-            raise ValueError("视频处理失败")
+            raise ValueError(f"视频处理失败: {str(e)}")
 
     def group_images(self) -> list[list[str]]:
         image_files = [os.path.join(self.frame_dir, f) for f in os.listdir(self.frame_dir) if

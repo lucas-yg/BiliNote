@@ -244,51 +244,44 @@ class TengxunDownloader(Downloader):
             raise e
 
     def _extract_audio_with_ffmpeg(self, video_path: str, audio_path: str, quality: DownloadQuality):
-        """使用ffmpeg从视频中提取音频"""
+        """使用增强的ffmpeg从视频中提取音频，支持损坏视频修复"""
+        from app.utils.video_repair import safe_extract_audio
+        
         try:
             # 根据质量设置音频比特率
             quality_map = {
-                "fast": "32k",
-                "medium": "64k", 
-                "slow": "128k"
+                "fast": "64k",    # 提高最低质量
+                "medium": "128k", 
+                "slow": "192k"    # 提高高质量设置
             }
-            bitrate = quality_map.get(quality, "64k")
+            bitrate = quality_map.get(quality, "128k")
             
-            # ffmpeg命令：从视频提取音频
-            cmd = [
-                'ffmpeg',
-                '-i', video_path,
-                '-vn',  # 不处理视频流
-                '-acodec', 'mp3',
-                '-ab', bitrate,
-                '-ar', '22050',  # 采样率
-                '-y',  # 覆盖输出文件
-                audio_path
-            ]
+            print(f"开始提取音频: {video_path} -> {audio_path} (质量: {bitrate})")
             
-            print(f"执行ffmpeg命令: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            # 使用健壮的音频提取工具
+            success, error_msg = safe_extract_audio(
+                video_path, 
+                audio_path, 
+                bitrate=bitrate,
+                repair_if_needed=True  # 允许自动修复
+            )
             
-            print(f"ffmpeg返回码: {result.returncode}")
-            if result.stdout:
-                print(f"ffmpeg标准输出: {result.stdout}")
-            if result.stderr:
-                print(f"ffmpeg错误输出: {result.stderr}")
+            if success:
+                file_size = os.path.getsize(audio_path)
+                print(f"音频提取成功: {audio_path} ({file_size} bytes)")
+            else:
+                raise Exception(f"音频提取失败: {error_msg}")
             
-            if result.returncode != 0:
-                raise Exception(f"ffmpeg执行失败: {result.stderr}")
-                
-            if not os.path.exists(audio_path):
-                raise Exception("音频文件提取失败")
-                
-            print(f"音频提取成功: {audio_path}")
-            
-        except subprocess.TimeoutExpired:
-            raise Exception("音频提取超时")
         except FileNotFoundError:
-            raise Exception("ffmpeg未安装或不在PATH中")
+            raise Exception("ffmpeg未安装或不在PATH中，请安装ffmpeg后重试")
         except Exception as e:
-            raise Exception(f"音频提取失败: {str(e)}")
+            error_msg = str(e)
+            if "Invalid NAL unit size" in error_msg or "Error splitting the input into NAL units" in error_msg:
+                raise Exception("视频文件已损坏，无法提取音频。请尝试使用其他视频文件或联系技术支持")
+            elif "timeout" in error_msg.lower():
+                raise Exception("音频提取超时，视频文件可能过大或已损坏")
+            else:
+                raise Exception(f"音频提取失败: {error_msg}")
 
     def _try_decrypt_wechat_video(self, encrypted_file: str, decrypted_file: str) -> bool:
         """尝试解密微信视频文件"""

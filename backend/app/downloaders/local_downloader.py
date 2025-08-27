@@ -20,10 +20,7 @@ class LocalDownloader(Downloader, ABC):
 
     def extract_cover(self, input_path: str, output_dir: Optional[str] = None) -> str:
         """
-        从本地视频文件中提取一张封面图（默认取第一帧）
-        :param input_path: 输入视频路径
-        :param output_dir: 输出目录，默认和视频同目录
-        :return: 提取出的封面图片路径
+        从本地视频文件中提取一张封面图，支持损坏视频
         """
         if not os.path.exists(input_path):
             raise FileNotFoundError(f"输入文件不存在: {input_path}")
@@ -34,31 +31,75 @@ class LocalDownloader(Downloader, ABC):
         base_name = os.path.splitext(os.path.basename(input_path))[0]
         output_path = os.path.join(output_dir, f"{base_name}_cover.jpg")
 
-        try:
-            command = [
-                'ffmpeg',
-                '-i', input_path,
-                '-ss', '00:00:01',  # 跳到视频第1秒，防止黑屏
-                '-vframes', '1',  # 只截取一帧
-                '-q:v', '2',  # 输出质量高一点（qscale，2是很高）
-                '-y',  # 覆盖
-                output_path
-            ]
-            subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        # 使用增强的ffmpeg命令，支持损坏视频
+        command = [
+            'ffmpeg',
+            '-err_detect', 'ignore_err',        # 忽略解码错误
+            '-fflags', '+discardcorrupt',       # 丢弃损坏的包
+            '-ss', '00:00:01',                  # 跳到视频第1秒，防止黑屏
+            '-i', input_path,
+            '-vframes', '1',                    # 只截取一帧
+            '-q:v', '2',                        # 高质量
+            '-avoid_negative_ts', 'make_zero',  # 避免负时间戳
+            '-y',                               # 覆盖
+            output_path
+        ]
 
-            if not os.path.exists(output_path):
-                raise RuntimeError(f"封面图片生成失败: {output_path}")
+        try:
+            result = subprocess.run(
+                command, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                timeout=30,
+                check=False
+            )
+
+            if result.returncode != 0:
+                print(f"封面提取失败，尝试备用方案: {result.stderr}")
+                # 尝试更宽松的参数
+                fallback_command = [
+                    'ffmpeg',
+                    '-err_detect', 'ignore_err',
+                    '-fflags', '+discardcorrupt+igndts',
+                    '-ss', '00:00:00.5',               # 更早的时间点
+                    '-i', input_path,
+                    '-vframes', '1',
+                    '-vf', 'scale=640:-1',             # 缩放减少处理复杂度
+                    '-q:v', '5',                       # 降低质量要求
+                    '-y',
+                    output_path
+                ]
+                
+                fallback_result = subprocess.run(
+                    fallback_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    check=False
+                )
+                
+                if fallback_result.returncode != 0:
+                    # 如果都失败了，创建占位图
+                    from app.utils.video_helper import _create_placeholder_image
+                    return _create_placeholder_image(output_path, "无法提取封面")
+
+            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                from app.utils.video_helper import _create_placeholder_image
+                return _create_placeholder_image(output_path, "封面提取失败")
 
             return output_path
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"提取封面失败: {output_path}") from e
+            
+        except subprocess.TimeoutExpired:
+            from app.utils.video_helper import _create_placeholder_image
+            return _create_placeholder_image(output_path, "封面提取超时")
+        except Exception as e:
+            print(f"提取封面异常: {e}")
+            from app.utils.video_helper import _create_placeholder_image
+            return _create_placeholder_image(output_path, "封面提取异常")
 
-    def convert_to_mp3(self,input_path: str, output_path: str = None) -> str:
+    def convert_to_mp3(self, input_path: str, output_path: str = None) -> str:
         """
-        将本地视频文件转为 MP3 音频文件
-        :param input_path: 输入文件路径（如 .mp4）
-        :param output_path: 输出文件路径（可选，默认同目录同名 .mp3）
-        :return: 生成的 mp3 文件路径
+        将本地视频文件转为 MP3 音频文件，支持损坏视频
         """
         if not os.path.exists(input_path):
             raise FileNotFoundError(f"输入文件不存在: {input_path}")
@@ -66,25 +107,22 @@ class LocalDownloader(Downloader, ABC):
         if output_path is None:
             base, _ = os.path.splitext(input_path)
             output_path = base + ".mp3"
-        try:
-        # 调用 ffmpeg 转换
-            command = [
-                'ffmpeg',
-                '-i', input_path,
-                '-vn',  # 不要视频流
-                '-acodec', 'libmp3lame',  # 使用mp3编码
-                '-y',  # 覆盖输出文件
-                output_path
-            ]
 
-            subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-
-            if not os.path.exists(output_path):
-                raise RuntimeError(f"mp3 文件生成失败: {output_path}")
-
+        # 使用安全的音频提取工具
+        from app.utils.video_repair import safe_extract_audio
+        
+        success, error_msg = safe_extract_audio(
+            input_path,
+            output_path,
+            bitrate="128k",
+            repair_if_needed=True
+        )
+        
+        if success:
+            print(f"音频转换成功: {output_path}")
             return output_path
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"mp3 文件生成失败: {output_path}") from e
+        else:
+            raise RuntimeError(f"音频转换失败: {error_msg}")
     def download_video(self, video_url: str, output_dir: str = None) -> str:
         """
         处理本地文件路径，返回视频文件路径

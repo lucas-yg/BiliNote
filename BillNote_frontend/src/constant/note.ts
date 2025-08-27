@@ -18,7 +18,7 @@ export const noteFormats = [
 export const noteStyles = [
   { label: '精简', value: 'minimal' },
   { label: '详细', value: 'detailed' },
-  { label: '教程', value: 'tutorial' },
+  { label: '编程教程', value: 'tutorial' },
   { label: '学术', value: 'academic' },
   { label: '小红书', value: 'xiaohongshu' },
   { label: '生活向', value: 'life_journal' },
