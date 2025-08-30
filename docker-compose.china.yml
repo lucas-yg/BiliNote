@@ -4,9 +4,6 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile.china 
-      args:
-        - HTTP_PROXY=http://host.docker.internal:7890
-        - HTTPS_PROXY=http://host.docker.internal:7890
       x-bake:
         platforms:
           - linux/arm64
@@ -18,10 +15,17 @@ services:
     environment:
       - BACKEND_PORT=${BACKEND_PORT}
       - BACKEND_HOST=${BACKEND_HOST}
+      - HOST_GATEWAY=${HOST_GATEWAY:-172.18.0.1}  # 可配置的网关IP
     # volumes:
     #   - ./backend:/app
     expose:
       - '${BACKEND_PORT}'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Docker内置的宿主机访问方式
+      - "api.host:host-gateway"  # 给网关一个友好的名称
+    networks:
+      - default
+      - new-api_default  # 连接到new-api网络
 
   frontend:
     container_name: bilinote-frontend
@@ -44,3 +48,9 @@ services:
     depends_on:
       - backend
       - frontend
+
+networks:
+  default:
+    name: bilinote_default
+  new-api_default:
+    external: true  # 使用已存在的new-api网络

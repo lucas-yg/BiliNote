@@ -10,10 +10,15 @@ services:
     environment:
       - BACKEND_PORT=${BACKEND_PORT}
       - BACKEND_HOST=${BACKEND_HOST}
-    volumes:
-      - ./backend:/app
+      - HOST_GATEWAY=${HOST_GATEWAY:-172.18.0.1}  # 可配置的网关IP
     expose:
       - "${BACKEND_PORT}"  # 不再对外暴露，用于 nginx 内部通信
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Docker内置的宿主机访问方式
+      - "api.host:host-gateway"  # 给网关一个友好的名称
+    networks:
+      - default
+      - new-api_default  # 连接到new-api网络
 
   frontend:
     container_name: bilinote-frontend
@@ -27,11 +32,17 @@ services:
 
   nginx:
     container_name: bilinote-nginx
-    image: nginx:1.25-alpine
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile.nginx
     ports:
       - "${APP_PORT}:80"
-    volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
     depends_on:
       - backend
       - frontend
+
+networks:
+  default:
+    name: bilinote_default
+  new-api_default:
+    external: true  # 使用已存在的new-api网络

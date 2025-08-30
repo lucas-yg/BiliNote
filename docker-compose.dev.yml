@@ -1,0 +1,45 @@
+# 开发环境配置 - 支持代码热更新
+
+services:
+  backend:
+    container_name: bilinote-backend-dev
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      - BACKEND_PORT=${BACKEND_PORT}
+      - BACKEND_HOST=${BACKEND_HOST}
+      - HOST_GATEWAY=${HOST_GATEWAY:-172.18.0.1}
+      - ENV=development
+    # volumes:
+    #   - ./backend:/app  # 开发时如需要代码热更新，可手动启用
+    ports:
+      - "${BACKEND_PORT}:${BACKEND_PORT}"  # 开发时直接暴露后端端口
+    extra_hosts:
+      - "api.host:${HOST_GATEWAY:-172.18.0.1}"
+
+  frontend:
+    container_name: bilinote-frontend-dev
+    build:
+      context: .
+      dockerfile: BillNote_frontend/Dockerfile
+    env_file:
+      - .env
+    # volumes:
+    #   - ./BillNote_frontend/src:/app/src  # 前端代码热更新
+    #   - ./BillNote_frontend/public:/app/public
+    ports:
+      - "5173:80"  # 开发时直接访问前端
+
+  nginx:
+    container_name: bilinote-nginx-dev
+    image: nginx:1.25-alpine
+    ports:
+      - "${APP_PORT:-3015}:80"
+    # volumes:
+    #   - ./nginx/default.conf:/etc/nginx/conf.d/default.conf  # 如需要修改nginx配置，可手动启用
+    depends_on:
+      - backend
+      - frontend

@@ -1,30 +1,78 @@
+# 使用官方Python 3.11 slim镜像作为基础镜像
 FROM python:3.11-slim
 
-RUN rm -f /etc/apt/sources.list && \
-    rm -rf /etc/apt/sources.list.d/* && \
-    echo "deb https://mirrors.aliyun.com/debian/ bookworm main non-free contrib" > /etc/apt/sources.list && \
-    echo "deb https://mirrors.aliyun.com/debian/ bookworm-updates main non-free contrib" >> /etc/apt/sources.list && \
-    echo "deb https://mirrors.aliyun.com/debian/ bookworm-backports main non-free contrib" >> /etc/apt/sources.list && \
-    echo "deb https://mirrors.aliyun.com/debian-security bookworm-security main non-free contrib" >> /etc/apt/sources.list && \
-    apt-get clean && \
+# 设置构建时的环境变量，优化包管理器行为
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 安装系统依赖，使用内存优化策略
+# 分步骤安装以降低峰值内存使用
+RUN set -ex && \
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
     apt-get update && \
-    apt-get install -y ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        gnupg \
+        && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# 确保 PATH 中包含 ffmpeg 路径（可选）
-ENV PATH="/usr/bin:${PATH}"
+# 分离FFmpeg安装以降低内存压力
+RUN set -ex && \
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
+    ffmpeg -version
 
-# 设置 Hugging Face 镜像源环境变量
-ENV HF_ENDPOINT=https://hf-mirror.com
+# 设置路径和Hugging Face镜像源（很少变化的配置）
+ENV PATH="/usr/bin:${PATH}" \
+    HF_ENDPOINT=https://hf-mirror.com
 
-# 禁用代理
-ENV http_proxy=""
-ENV https_proxy=""
-ENV HTTP_PROXY=""
-ENV HTTPS_PROXY=""
-
+# 设置工作目录
 WORKDIR /app
-COPY ./backend /app
-RUN pip install --no-cache-dir --proxy "" -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
 
+# 关键优化：先复制requirements.txt，这样只有依赖变化时才重新安装
+# 这是缓存优化的核心 - 将依赖安装与代码变更分离
+COPY ./backend/requirements.txt /app/requirements.txt
+
+# 安装Python依赖，使用中国镜像源
+# 只有当requirements.txt发生变化时，这一层才会重新构建
+# 重要：确保pip安装时也清除代理配置
+RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
+    pip install --no-cache-dir --timeout=300 --retries=3 \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple \
+        --trusted-host pypi.tuna.tsinghua.edu.cn \
+        --upgrade pip setuptools wheel && \
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
+    pip install --no-cache-dir --timeout=300 --retries=3 \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple \
+        --trusted-host pypi.tuna.tsinghua.edu.cn \
+        -r requirements.txt
+
+# 最后复制应用源代码
+# 代码变更只会影响这一层和之后的层，前面的依赖层会被缓存
+COPY ./backend /app
+
+# 创建非root用户提升安全性（可选但推荐）
+RUN groupadd -r appuser && \
+    useradd -r -g appuser -m -d /home/appuser appuser && \
+    chown -R appuser:appuser /app && \
+    chown -R appuser:appuser /home/appuser
+USER appuser
+
+# 暴露端口（文档目的，实际端口由运行时指定）
+EXPOSE 8000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=10)" || exit 1
+
+# 启动命令
 CMD ["python", "main.py"]

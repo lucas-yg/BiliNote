@@ -1,0 +1,81 @@
+# Docker构建缓存优化 - 忽略这些文件可以避免不必要的重建
+
+# 开发工具和IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python缓存和字节码
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.pytest_cache/
+
+# 虚拟环境
+venv/
+env/
+.venv/
+.env/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+bili_note.db
+note_tasks.db
+
+# 日志文件
+logs/
+*.log
+*.log.*
+
+# 临时文件和缓存
+.cache/
+.tmp/
+tmp/
+temp/
+
+# 运行时生成的文件
+data/
+static/
+uploads/
+note_results/
+models/
+bin/
+
+# 测试覆盖率报告
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 文档和说明
+README.md
+CHANGELOG.md
+*.md
+
+# Git相关
+.git/
+.gitignore
+
+# Docker相关文件（避免递归复制）
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# 开发脚本
+scripts/
+*.sh
+
+# 环境配置文件
+.env
+.env.*
+!.env.example

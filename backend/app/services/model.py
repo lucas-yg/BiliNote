@@ -147,8 +147,11 @@ class ModelService:
                 if isinstance(e, ProviderError):
                     raise e
                 else:
-                    # 将底层错误包装成ProviderError
-                    raise ProviderError(code=ProviderErrorEnum.WRONG_PARAMETER.code, message=str(e))
+                    # 将底层错误包装成ProviderError，保持详细的错误信息
+                    error_message = str(e)
+                    # 记录详细错误用于调试
+                    logger.error(f"连通性测试底层错误: {error_message}")
+                    raise ProviderError(code=ProviderErrorEnum.WRONG_PARAMETER.code, message=error_message)
 
         raise ProviderError(code=ProviderErrorEnum.NOT_FOUND.code, message=ProviderErrorEnum.NOT_FOUND.message)
 

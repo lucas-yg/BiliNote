@@ -54,5 +54,13 @@
     "logo": "Ollama",
     "api_key": "",
     "base_url": "http://127.0.0.1:11434/v1"
+  },
+  {
+    "id": "local-new-api",
+    "name": "Local New-API",
+    "type": "built-in",
+    "logo": "OpenAI",
+    "api_key": "",
+    "base_url": "http://new-api:3000/v1"
   }
 ]
