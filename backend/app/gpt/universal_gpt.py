@@ -23,12 +23,13 @@ MAX_DELAY = 60  # 最大延迟时间（秒）
 MAX_FAILED_CHUNKS_RATIO = 0.3  # 允许最多30%的块失败
 
 class UniversalGPT(GPT):
-    def __init__(self, client, model: str, temperature: float = 0.7):
+    def __init__(self, client, model: str, temperature: float = 0.7, provider=None):
         self.client = client
         self.model = model
         self.temperature = temperature
         self.screenshot = False
         self.link = False
+        self.provider = provider  # 保存provider实例
 
     def _format_time(self, seconds: float) -> str:
         return str(timedelta(seconds=int(seconds)))[2:]
@@ -57,7 +58,15 @@ class UniversalGPT(GPT):
                     messages=messages,
                     temperature=self.temperature
                 )
-                
+
+                # 调试：检查响应类型
+                logger.debug(f"GPT响应类型: {type(response)}, 响应内容: {str(response)[:200]}")
+
+                # 如果响应是字符串，直接返回
+                if isinstance(response, str):
+                    logger.warning("GPT返回了字符串响应，直接返回内容")
+                    return response.strip()
+
                 content = response.choices[0].message.content
                 if not content or content.strip() == "":
                     raise Exception("GPT返回空内容")
@@ -95,11 +104,20 @@ class UniversalGPT(GPT):
                 error_code = getattr(e, 'status_code', 'unknown')
                 error_msg = f"API服务错误 {chunk_info} (状态码: {error_code}): {str(e)}"
                 logger.warning(f"第{attempt + 1}次尝试失败 - {error_msg}")
-                
+
                 # 对于某些错误码，不需要重试
                 if hasattr(e, 'status_code') and e.status_code in [400, 401, 403, 404]:
                     logger.error(f"API错误不可重试 {chunk_info}: {error_code}")
                     break
+                # 402错误（请求被拦截）- 使用指数退避 + 更长延迟
+                elif hasattr(e, 'status_code') and e.status_code == 402:
+                    if attempt < MAX_RETRIES - 1:
+                        # 402通常是速率限制，使用更激进的退避策略
+                        delay = min(BASE_DELAY * (4 ** attempt) + random.uniform(3, 8), MAX_DELAY)
+                        logger.warning(f"⚠️  请求被拦截(402)，可能触发速率限制。等待 {delay:.2f} 秒后重试...")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"❌ 请求持续被拦截(402)，已达最大重试次数 {chunk_info}。建议：1)切换API提供商 2)降低请求频率 3)检查账户状态")
                 # 对于500/503等服务器错误，使用更长的延迟
                 elif hasattr(e, 'status_code') and e.status_code in [500, 502, 503, 504]:
                     if attempt < MAX_RETRIES - 1:
@@ -170,8 +188,8 @@ class UniversalGPT(GPT):
             error_suggestions.append("确认是否能正常访问AI服务")
             
         if "timeout" in main_error.lower() or "timeout" in fallback_error.lower():
-            error_suggestions.append("视频内容可能过长，建议使用较短的视频")
             error_suggestions.append("稍后重试，服务器可能暂时繁忙")
+            error_suggestions.append("视频内容可能过长，系统会自动分段处理")
             
         if "rate limit" in main_error.lower() or "rate limit" in fallback_error.lower():
             error_suggestions.append("等待几分钟后再次尝试")
@@ -248,7 +266,60 @@ class UniversalGPT(GPT):
         return messages
 
     def list_models(self):
-        return self.client.models.list()
+        """获取模型列表，兼容new-api等非标准OpenAI接口"""
+        # 如果有provider实例，优先使用它的list_models方法
+        if self.provider and hasattr(self.provider, 'list_models'):
+            try:
+                logger.info("使用provider的list_models方法")
+                return self.provider.list_models()
+            except Exception as e:
+                logger.warning(f"Provider的list_models失败，回退到标准方法: {e}")
+
+        # 回退到原有逻辑
+        try:
+            # 尝试标准的 OpenAI models.list()
+            return self.client.models.list()
+        except AttributeError as e:
+            # 如果遇到 '_set_private_attributes' 错误，说明是new-api等兼容接口
+            if "'str' object has no attribute '_set_private_attributes'" in str(e):
+                logger.warning(f"检测到非标准OpenAI接口，尝试使用HTTP请求获取模型列表: {e}")
+                # 使用 requests 直接调用
+                import requests
+                base_url = str(self.client.base_url).rstrip('/')
+                if not base_url.endswith('/v1'):
+                    base_url = base_url + '/v1'
+
+                headers = {'Authorization': f'Bearer {self.client.api_key}'}
+                response = requests.get(f'{base_url}/models', headers=headers, timeout=10)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    # 转换为标准格式
+                    class ModelList:
+                        def __init__(self, models_data):
+                            self.data = []
+                            if isinstance(models_data, dict) and 'data' in models_data:
+                                for m in models_data['data']:
+                                    # 使用默认参数避免闭包问题
+                                    model_id = m.get('id')
+                                    model_obj = type('Model', (), {
+                                        'id': model_id,
+                                        'dict': lambda self, mid=model_id: {'id': mid}
+                                    })()
+                                    self.data.append(model_obj)
+                    return ModelList(data)
+                else:
+                    logger.error(f"获取模型列表HTTP请求失败: {response.status_code} - {response.text}")
+                    raise Exception(f"获取模型列表失败: {response.status_code}")
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"获取模型列表失败: {e}")
+            # 返回空列表
+            class EmptyModelList:
+                def __init__(self):
+                    self.data = []
+            return EmptyModelList()
 
     def summarize(self, source: GPTSource) -> str:
         self.screenshot = source.screenshot
@@ -311,12 +382,12 @@ class UniversalGPT(GPT):
         
         chunk_summaries = []
         failed_chunks = []
-        
+
         # 处理每个块
         for i in range(num_chunks):
             start_idx = i * chunk_size
             end_idx = min(start_idx + chunk_size, total_segments)
-            
+
             print(f"处理第{i+1}/{num_chunks}块 (段落 {start_idx} 到 {end_idx-1})")
             
             # 创建此块的子源
@@ -360,8 +431,13 @@ class UniversalGPT(GPT):
                 
                 # 检查失败率是否超过阈值
                 failed_ratio = len(failed_chunks) / num_chunks
+
                 if failed_ratio > MAX_FAILED_CHUNKS_RATIO:
-                    raise Exception(f"视频分段处理失败率过高({failed_ratio:.1%})，已停止处理。失败的块: {failed_chunks}。建议稍后重试或使用较短的视频内容。")
+                    raise Exception(
+                        f"视频分段处理失败率过高({failed_ratio:.1%})，已停止处理。失败的块: {failed_chunks}。"
+                        f"主要原因可能是：1) API速率限制（建议等待几分钟后重试）2) 网络不稳定（检查网络连接）"
+                        f"3) API服务商问题（考虑切换到其他provider）"
+                    )
                 
                 print(f"继续处理剩余块... (当前失败率: {failed_ratio:.1%})")
         

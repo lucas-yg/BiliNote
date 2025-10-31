@@ -16,7 +16,12 @@ class OpenaiGPT(GPT):
         self.base_url = getenv("OPENAI_API_BASE_URL")
         self.model=getenv('OPENAI_MODEL')
         print(self.model)
-        self.client = OpenAICompatibleProvider(api_key=self.api_key, base_url=self.base_url)
+        self.cf_cookie = getenv("OPENAI_CF_COOKIE")
+        self.client = OpenAICompatibleProvider(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            cookie=self.cf_cookie
+        )
         self.screenshot = False
         self.link=False
 

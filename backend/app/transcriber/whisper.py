@@ -3,7 +3,7 @@ from faster_whisper import WhisperModel
 from app.decorators.timeit import timeit
 from app.models.transcriber_model import TranscriptSegment, TranscriptResult
 from app.transcriber.base import Transcriber
-from app.utils.env_checker import is_cuda_available, is_torch_installed
+from app.utils.env_checker import is_cuda_available
 from app.utils.logger import get_logger
 from app.utils.path_helper import get_model_dir
 
@@ -35,16 +35,14 @@ class WhisperTranscriber(Transcriber):
     def __init__(
             self,
             model_size: str = "base",
-            device: str = 'cpu',
+            device: str = 'cuda',
             compute_type: str = None,
             cpu_threads: int = 1,
     ):
-        if device == 'cpu' or device is None:
-            self.device = 'cpu'
-        else:
-            self.device = "cuda" if self.is_cuda() else "cpu"
-            if device == 'cuda' and self.device == 'cpu':
-                print('没有 cuda 使用 cpu进行计算')
+        requested_device = (device or 'cpu').lower()
+        self.device = self._select_device(requested_device)
+        if requested_device == 'cuda' and self.device != 'cuda':
+            logger.info('未检测到可用的 CUDA 环境，自动回退为 CPU 推理')
 
         self.compute_type = compute_type or ("float16" if self.device == "cuda" else "int8")
 
@@ -66,29 +64,22 @@ class WhisperTranscriber(Transcriber):
             compute_type=self.compute_type,
             download_root=model_dir
         )
-    @staticmethod
-    def is_torch_installed() -> bool:
-        try:
-            import torch
-            return True
-        except ImportError:
-            return False
 
     @staticmethod
-    def is_cuda() -> bool:
-        try:
+    def _select_device(requested_device: str) -> str:
+        """根据用户请求与运行环境选择推理设备。"""
+        if requested_device in (None, 'cpu'):
+            return 'cpu'
+
+        if requested_device == 'cuda':
             if is_cuda_available():
-                print(" CUDA 可用，使用 GPU")
-                return True
-            elif is_torch_installed():
-                print(" 只装了 torch，但没有 CUDA，用 CPU")
-                return False
-            else:
-                print(" 还没有安装 torch，请先安装")
-                return False
+                logger.info('检测到 CUDA，可使用 GPU 推理')
+                return 'cuda'
+            logger.warning('请求使用 CUDA，但当前环境缺少 GPU 或相关依赖，回退至 CPU')
+            return 'cpu'
 
-        except ImportError:
-            return False
+        logger.warning(f'未知的推理设备 "{requested_device}"，默认使用 CPU')
+        return 'cpu'
 
     @timeit
     def transcript(self, file_path: str) -> TranscriptResult:
@@ -125,4 +116,3 @@ class WhisperTranscriber(Transcriber):
         transcription_finished.send({
             "file_path": video_path,
         })
-

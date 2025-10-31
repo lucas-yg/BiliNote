@@ -16,7 +16,12 @@ class QwenGPT(GPT):
         self.base_url = getenv("QWEN_API_BASE_URL")
         self.model=getenv('QWEN_MODEL')
         print(self.model)
-        self.client = OpenAICompatibleProvider(api_key=self.api_key, base_url=self.base_url)
+        self.cf_cookie = getenv("QWEN_CF_COOKIE")
+        self.client = OpenAICompatibleProvider(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            cookie=self.cf_cookie
+        )
         self.screenshot = False
 
     def _format_time(self, seconds: float) -> str:

@@ -11,6 +11,8 @@ services:
       - BACKEND_PORT=${BACKEND_PORT}
       - BACKEND_HOST=${BACKEND_HOST}
       - HOST_GATEWAY=${HOST_GATEWAY:-172.18.0.1}  # 可配置的网关IP
+      - NEW_API_BASE_URL=${NEW_API_BASE_URL}  # new-api内部访问地址
+      - NEW_API_HOST_URL=${NEW_API_HOST_URL}  # new-api外部访问地址
     expose:
       - "${BACKEND_PORT}"  # 不再对外暴露，用于 nginx 内部通信
     extra_hosts:

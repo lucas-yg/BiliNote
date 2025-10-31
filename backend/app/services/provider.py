@@ -121,6 +121,12 @@ class ProviderService:
         try:
         # 过滤掉空值
             filtered_data = {k: v for k, v in data.items() if v is not None and k != 'id'}
+
+            # 如果 API Key 包含星号，说明是脱敏的，不应该更新
+            if 'api_key' in filtered_data and '*' in filtered_data['api_key']:
+                print('检测到脱敏的 API Key，忽略更新')
+                filtered_data.pop('api_key')
+
             print('更新模型供应商',filtered_data)
             update_provider(id, **filtered_data)
             return id

@@ -100,17 +100,51 @@ class ModelService:
 
             models = ModelService.get_model_list(provider["id"], verbose=verbose)
             print(f"模型对象类型: {type(models)}")
-            
+
             # 处理不同的模型列表格式
+            serializable_models = []
             if hasattr(models, 'data'):
                 # OpenAI标准格式，有.data属性
-                serializable_models = [m.dict() for m in models.data]
+                for m in models.data:
+                    try:
+                        if hasattr(m, 'dict'):
+                            serializable_models.append(m.dict())
+                        elif isinstance(m, dict):
+                            serializable_models.append(m)
+                        else:
+                            # 尝试将对象转换为dict
+                            serializable_models.append({
+                                'id': getattr(m, 'id', str(m)),
+                                'object': getattr(m, 'object', 'model'),
+                                'created': getattr(m, 'created', 0),
+                                'owned_by': getattr(m, 'owned_by', 'unknown')
+                            })
+                    except Exception as e:
+                        logger.warning(f"跳过无法序列化的模型: {e}")
+                        continue
             elif isinstance(models, list):
                 # 直接返回list的格式
-                serializable_models = [m.dict() if hasattr(m, 'dict') else m for m in models]
+                for m in models:
+                    try:
+                        if hasattr(m, 'dict'):
+                            serializable_models.append(m.dict())
+                        elif isinstance(m, dict):
+                            serializable_models.append(m)
+                        else:
+                            serializable_models.append({'id': str(m)})
+                    except Exception as e:
+                        logger.warning(f"跳过无法序列化的模型: {e}")
+                        continue
             else:
                 # 其他格式，尝试直接转换
-                serializable_models = [models.dict()] if hasattr(models, 'dict') else [models]
+                try:
+                    if hasattr(models, 'dict'):
+                        serializable_models = [models.dict()]
+                    else:
+                        serializable_models = [{'id': str(models)}]
+                except Exception as e:
+                    logger.warning(f"无法序列化模型对象: {e}")
+                    serializable_models = []
             
             model_list = {
                 "models": {

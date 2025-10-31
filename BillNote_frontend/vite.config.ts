@@ -1,3 +1,11 @@
+/*
+ * @Author: yangyuguang 2556885696@qq.com
+ * @Date: 2025-07-06 17:41:00
+ * @LastEditors: yangyuguang 2556885696@qq.com
+ * @LastEditTime: 2025-10-31 14:59:07
+ * @FilePath: /BiliNote/BillNote_frontend/vite.config.ts
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
@@ -10,7 +18,10 @@ dns.setDefaultResultOrder('ipv4first');
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd());
-  const apiBaseUrl = env.VITE_API_BASE_URL || 'http://127.0.0.1:8483';
+  // 也尝试从父目录加载环境变量
+  const parentEnv = loadEnv(mode, path.resolve(process.cwd(), '..'));
+  const mergedEnv = { ...parentEnv, ...env };
+  const apiBaseUrl = mergedEnv.VITE_API_BASE_URL || 'http://127.0.0.1:8483';
   const port = parseInt(env.VITE_FRONTEND_PORT || '3015', 10);
 
   return {

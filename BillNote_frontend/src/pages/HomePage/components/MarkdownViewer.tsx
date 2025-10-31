@@ -52,7 +52,7 @@ const MarkdownViewer: FC<MarkdownViewerProps> = ({ status }) => {
   const [modelName, setModelName] = useState<string>('')
   const [style, setStyle] = useState<string>('')
   const [createTime, setCreateTime] = useState<string>('')
-  const baseURL = String(import.meta.env.VITE_API_BASE_URL).replace('/api','') || ''
+  const baseURL = ''
   const getCurrentTask = useTaskStore.getState().getCurrentTask
   const currentTask = useTaskStore(state => state.getCurrentTask())
   const taskStatus = currentTask?.status || 'PENDING'

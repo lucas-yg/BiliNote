@@ -1,26 +1,248 @@
 from typing import Optional, Union
+from urllib.parse import urlparse
+import time
+import json
+import warnings
+import threading
 
 from openai import OpenAI
+import httpx
 
+from app.services.cookie_manager import CookieConfigManager
 from app.utils.logger import get_logger
 
-logging= get_logger(__name__)
+# 抑制SSL警告
+try:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except ImportError:
+    pass
+
+# Cloudscraper 已移除，不再支持
+CLOUDSCRAPER_AVAILABLE = False
+
+logging = get_logger(__name__)
+
+try:
+    import h2  # noqa: F401
+    HTTP2_AVAILABLE = True
+except ImportError:
+    HTTP2_AVAILABLE = False
+
+HTTP2_WARNING_EMITTED = False
+COOKIE_MANAGER = CookieConfigManager()
+
+# Cloudscraper 相关功能已移除
+
+
+def _warn_http2_disabled_once() -> None:
+    global HTTP2_WARNING_EMITTED
+    if HTTP2_AVAILABLE or HTTP2_WARNING_EMITTED:
+        return
+    logging.warning("未安装h2模块，将使用HTTP/1.1访问兼容API；可执行 pip install 'httpx[http2]' 以启用HTTP/2")
+    HTTP2_WARNING_EMITTED = True
+
+
+def _normalize_cookie(cookie: Optional[str]) -> Optional[str]:
+    if not cookie:
+        return None
+    # 允许用户粘贴 `key:value` 或换行分隔的形式，统一转为标准Cookie头
+    raw = cookie.replace('\n', ';').strip()
+    if not raw:
+        return None
+
+    normalized_parts = []
+    for segment in raw.split(';'):
+        piece = segment.strip()
+        if not piece:
+            continue
+        if ':' in piece and '=' not in piece:
+            key, value = piece.split(':', 1)
+            piece = f"{key.strip()}={value.strip()}"
+        normalized_parts.append(piece)
+
+    if not normalized_parts:
+        return None
+    return '; '.join(normalized_parts)
+
+
+def _resolve_cookie_for_base_url(base_url: str, override_cookie: Optional[str] = None) -> Optional[str]:
+    if override_cookie:
+        normalized = _normalize_cookie(override_cookie)
+        if normalized:
+            return normalized
+
+    parsed = urlparse(base_url)
+    host = parsed.netloc or base_url
+    stored_cookie = COOKIE_MANAGER.get(host)
+    normalized = _normalize_cookie(stored_cookie)
+    if normalized:
+        logging.debug(f"读取到 {host} 的Cookie配置")
+    return normalized
+
+
+def _build_cookie_jar(base_url: str, override_cookie: Optional[str] = None) -> Optional[httpx.Cookies]:
+    cookie_string = _resolve_cookie_for_base_url(base_url, override_cookie)
+    if not cookie_string:
+        return None
+
+    jar = httpx.Cookies()
+    try:
+        jar.update_from_header(cookie_string)
+    except Exception as exc:
+        logging.warning(f"Cookie格式解析失败，将忽略本次Cookie。内容: {cookie_string}，错误: {exc}")
+        return None
+    return jar
 
 class OpenAICompatibleProvider:
-    def __init__(self, api_key: str, base_url: str, model: Union[str, None]=None):
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+    def __init__(self, api_key: str, base_url: str, model: Union[str, None]=None, cookie: Optional[str] = None):
+        # 标准化base_url，确保以/v1结尾（OpenAI兼容API标准）
+        base_url = base_url.rstrip('/')
+        if not base_url.endswith('/v1'):
+            # 如果base_url不以/v1结尾，自动添加
+            base_url = f"{base_url}/v1"
+            logging.info(f"自动添加/v1到base_url: {base_url}")
+
+        self.browser_headers = self._build_browser_like_headers(base_url)
+        _warn_http2_disabled_once()
+
+        cookie_jar = _build_cookie_jar(base_url, cookie)
+
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=httpx.Client(
+                verify=False,
+                http2=HTTP2_AVAILABLE,
+                headers=self.browser_headers,
+                timeout=30.0,
+                cookies=cookie_jar,
+                follow_redirects=True,
+            )  # 禁用SSL验证并伪装浏览器流量
+        )
         self.model = model
+
+        # Cloudscraper 备用客户端已移除
+        self.cloudscraper_client = None
+
+    @staticmethod
+    def _build_browser_like_headers(base_url: str) -> dict:
+        """构造类浏览器请求头，降低被Cloudflare误判的概率"""
+        parsed = urlparse(base_url)
+        origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else base_url
+        # 仿造Chromium系浏览器的常见头部，与Cherry Studio抓包结果保持一致
+        return {
+            "Accept": "*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Sec-CH-UA": '\"Not)A;Brand\";v="8", \"Chromium\";v="122", \"Google Chrome\";v="122"',
+            "Sec-CH-UA-Platform": '\"macOS\"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            "Referer": origin,
+        }
 
     @property
     def get_client(self):
         return self.client
 
+    def list_models(self):
+        """获取模型列表（支持 Cloudscraper 备用）"""
+        return self.list_models_with_fallback()
+
+    # Cloudscraper 相关方法已移除
+
+    def list_models_with_fallback(self):
+        """模型列表获取（移除Cloudscraper备用机制）"""
+        try:
+            # 首先尝试原始方法
+            result = self.client.models.list()
+            return result
+        except Exception as primary_error:
+            error_msg = str(primary_error).lower()
+            error_str = str(primary_error)
+
+            # 检查是否是压缩数据解析错误 (乱码/二进制数据)
+            is_decompression_error = (
+                'blocked' in error_msg or
+                '403' in error_msg or
+                "object has no attribute '_set_private_attributes'" in error_msg or
+                not error_str.isprintable()  # 检测乱码/二进制数据
+            )
+
+            if is_decompression_error:
+                # 尝试使用 requests 直接请求，它有更好的压缩处理
+                logging.warning("检测到响应解析问题，尝试使用 requests 备用方案")
+                try:
+                    import requests
+
+                    base_url = str(self.client.base_url).rstrip('/')
+                    models_url = f"{base_url}/models"
+
+                    headers = self.browser_headers.copy()
+                    headers['Authorization'] = f"Bearer {self.client.api_key}"
+
+                    response = requests.get(
+                        models_url,
+                        headers=headers,
+                        verify=False,
+                        timeout=30.0
+                    )
+
+                    if response.status_code == 200:
+                        response_data = response.json()
+
+                        # 构造兼容的返回对象
+                        class ModelObject:
+                            """模拟OpenAI SDK的Model对象"""
+                            def __init__(self, model_dict):
+                                self.id = model_dict.get('id', '')
+                                self.object = model_dict.get('object', 'model')
+                                self.created = model_dict.get('created', 0)
+                                self.owned_by = model_dict.get('owned_by', 'unknown')
+                                self._raw_dict = model_dict
+
+                            def dict(self):
+                                """返回字典格式，兼容OpenAI SDK"""
+                                return self._raw_dict
+
+                        class RequestsModelList:
+                            def __init__(self, data):
+                                # 将dict列表转换为ModelObject列表
+                                if isinstance(data, list):
+                                    self.data = [ModelObject(m) if isinstance(m, dict) else m for m in data]
+                                else:
+                                    self.data = []
+
+                        models = response_data.get('data', []) if isinstance(response_data, dict) else response_data
+                        logging.info(f"使用 requests 成功获取 {len(models)} 个模型")
+                        return RequestsModelList(models)
+                    else:
+                        logging.error(f"requests 备用方案失败: HTTP {response.status_code}")
+
+                except Exception as requests_error:
+                    logging.error(f"requests 备用方案失败: {requests_error}")
+
+            # 如果所有备用方案都失败，返回空列表
+            logging.error(f"获取模型列表失败: {primary_error}")
+            class EmptyModelList:
+                def __init__(self):
+                    self.data = []
+            return EmptyModelList()
+
     @staticmethod
-    def test_connection(api_key: str, base_url: str) -> bool:
+    def test_connection(api_key: str, base_url: str, cookie: Optional[str] = None) -> bool:
         try:
             # 调试：打印API Key的实际长度和内容
             logging.info(f"正在测试连接 - API Key长度: {len(api_key)}, 前8位: {api_key[:8]}, 后4位: {api_key[-4:] if len(api_key) > 4 else 'TOO_SHORT'}")
             logging.info(f"Base URL: {base_url}")
+            _warn_http2_disabled_once()
+            cookie_string = _resolve_cookie_for_base_url(base_url, cookie)
+            if cookie_string:
+                logging.info("已加载Cookie，尝试以持久会话访问目标API")
             
             # 硅基流动特殊处理：参考Cherry Studio的实现方式
             if "siliconflow" in base_url.lower():
@@ -50,9 +272,12 @@ class OpenAICompatibleProvider:
                 import json
                 
                 headers = {
+                    **OpenAICompatibleProvider._build_browser_like_headers(base_url),
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 }
+                if cookie_string:
+                    headers["Cookie"] = cookie_string
                 payload = {
                     "model": "Qwen/Qwen2.5-7B-Instruct",
                     "messages": [{"role": "user", "content": "hi"}],
@@ -90,16 +315,35 @@ class OpenAICompatibleProvider:
             if "siliconflow" in base_url.lower():
                 # 确保SDK使用正确的base_url（需要包含/v1）
                 sdk_base_url = api_base if api_base.endswith('/v1') else f"{api_base}/v1"
-                client = OpenAI(api_key=api_key, base_url=sdk_base_url)
-                logging.info(f"尝试OpenAI SDK方式，使用base_url: {sdk_base_url}")
-            else:
-                # 为其他OpenAI兼容服务（如new-api）设置合适的超时
+                # 添加 SSL 验证控制
+                import httpx
                 client = OpenAI(
-                    api_key=api_key, 
-                    base_url=base_url,
-                    timeout=30.0  # 增加超时时间
+                    api_key=api_key,
+                    base_url=sdk_base_url,
+                    http_client=httpx.Client(
+                        verify=False,
+                        http2=HTTP2_AVAILABLE,
+                        headers=OpenAICompatibleProvider._build_browser_like_headers(sdk_base_url),
+                        timeout=30.0,
+                        cookies=_build_cookie_jar(sdk_base_url, cookie_string)
+                    )
                 )
-                logging.info(f"创建OpenAI客户端，base_url: {base_url}")
+                logging.info(f"尝试OpenAI SDK方式，使用base_url: {sdk_base_url}（已禁用SSL验证）")
+            else:
+                # 为其他OpenAI兼容服务（如new-api）设置合适的超时和SSL控制
+                import httpx
+                client = OpenAI(
+                    api_key=api_key,
+                    base_url=base_url,
+                    timeout=30.0,  # 增加超时时间
+                    http_client=httpx.Client(
+                        verify=False,
+                        http2=HTTP2_AVAILABLE,
+                        headers=OpenAICompatibleProvider._build_browser_like_headers(base_url),
+                        cookies=_build_cookie_jar(base_url, cookie_string),
+                    )  # 禁用SSL验证并启用HTTP/2
+                )
+                logging.info(f"创建OpenAI客户端，base_url: {base_url}（已禁用SSL验证）")
             
             if "siliconflow" in base_url.lower():
                 # 硅基流动的免费模型列表
@@ -126,6 +370,7 @@ class OpenAICompatibleProvider:
                         
                         if "401" in error_msg or "Unauthorized" in error_msg or "Api key is invalid" in error_msg:
                             raise Exception("API Key 无效或已过期，请检查API Key是否正确")
+                        time.sleep(1.5)
                         continue
                 
                 # 尝试models接口
@@ -152,8 +397,12 @@ class OpenAICompatibleProvider:
                     # 如果models接口失败，尝试直接调用chat completion
                     try:
                         logging.info("models接口失败，尝试chat completions接口...")
-                        # 尝试一些常见的模型名
-                        test_models = ["gpt-3.5-turbo", "gpt-4", "text-davinci-003", "claude-3-haiku"]
+                        # 尝试一些常见的模型名（包括New API支持的模型）
+                        test_models = [
+                            "gpt-3.5-turbo",
+                            "gpt-4",
+                            "Qwen/Qwen2.5-7B-Instruct",
+                        ]
                         
                         for model in test_models:
                             try:
@@ -172,6 +421,7 @@ class OpenAICompatibleProvider:
                                 if "401" in error_msg or "Unauthorized" in error_msg:
                                     raise Exception("API Key 无效或已过期")
                                 # 继续尝试下一个模型
+                                time.sleep(1.5)  # 避免触发频率限制
                                 continue
                         
                         # 如果所有测试模型都失败，抛出原始的models错误
@@ -188,11 +438,20 @@ class OpenAICompatibleProvider:
         except Exception as e:
             error_msg = str(e)
             logging.error(f"连通性测试失败：{error_msg}")
-            
+
             # 详细记录异常信息用于调试
             import traceback
             logging.error(f"详细错误堆栈：{traceback.format_exc()}")
-            
+
+            # Cloudscraper 备用方案已移除
+
+            # 检查是否为Cloudflare阻塞，返回统一的错误信息
+            if "cloudflare" in error_msg.lower() or "attention required" in error_msg.lower() or "blocked" in error_msg.lower():
+                raise Exception("检测到Cloudflare保护，请尝试配置Cookie绕过或联系API提供商获取访问权限")
+
+            # 重新抛出原始异常
+            raise
+
             # 根据错误类型提供更具体的错误信息
             if "401" in error_msg or "Unauthorized" in error_msg or "Api key is invalid" in error_msg:
                 raise Exception("API Key 无效或已过期，请检查API Key是否正确")
@@ -219,4 +478,5 @@ class OpenAICompatibleProvider:
             else:
                 raise Exception(f"连接失败。完整错误信息: {error_msg}")
 
-            return False
+
+# Cloudscraper 连接测试函数已移除

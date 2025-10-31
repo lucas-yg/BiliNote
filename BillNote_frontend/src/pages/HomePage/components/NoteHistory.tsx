@@ -24,7 +24,7 @@ interface NoteHistoryProps {
 const NoteHistory: FC<NoteHistoryProps> = ({ onSelect, selectedId }) => {
   const tasks = useTaskStore(state => state.tasks)
   const removeTask = useTaskStore(state => state.removeTask)
-  const baseURL = import.meta.env.VITE_API_BASE_URL || 'api/'
+  const baseURL = '/api/'
   const [rawSearch, setRawSearch] = useState('')
   const [search, setSearch] = useState('')
   const fuse = new Fuse(tasks, {

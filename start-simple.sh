@@ -47,27 +47,36 @@ if [[ "$1" == "--frontend" ]]; then
 elif [[ "$1" == "--backend" ]]; then
     print_status "启动后端服务..."
     cd backend
-    
+
     # 检查 Python 环境
     if ! command -v python3 &> /dev/null; then
         print_error "未找到 Python3，请先安装"
         exit 1
     fi
-    
+
+    # 检查端口是否被占用
+    if lsof -i :8483 &>/dev/null; then
+        print_error "端口 8483 已被占用，请先停止其他后端服务"
+        print_status "你可以使用以下命令查看占用端口的进程："
+        echo "  lsof -i :8483"
+        echo "  kill -9 <PID>"
+        exit 1
+    fi
+
     # 安装依赖（如果需要）
     if [ ! -d "venv" ]; then
         print_status "创建虚拟环境..."
         python3 -m venv venv
     fi
-    
+
     source venv/bin/activate
-    
+
     if [ ! -f "venv/installed" ]; then
         print_status "安装后端依赖..."
         pip install -r requirements.txt
         touch venv/installed
     fi
-    
+
     print_success "启动后端服务..."
     python main.py
     

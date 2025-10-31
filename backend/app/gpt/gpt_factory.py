@@ -12,16 +12,17 @@ class GPTFactory:
     def from_config(config: ModelConfig) -> GPT:
         # 检查是否是硅基流动，使用专门的提供商类
         if "siliconflow" in config.base_url.lower():
-            client = SiliconFlowProvider(
-                api_key=config.api_key, 
+            provider = SiliconFlowProvider(
+                api_key=config.api_key,
                 base_url=config.base_url,
                 model=config.model_name
-            ).get_client
+            )
+            return UniversalGPT(client=provider.get_client, model=config.model_name, provider=provider)
         else:
             # 其他提供商使用通用兼容类
-            client = OpenAICompatibleProvider(
-                api_key=config.api_key, 
+            provider = OpenAICompatibleProvider(
+                api_key=config.api_key,
                 base_url=config.base_url
-            ).get_client
-            
-        return UniversalGPT(client=client, model=config.model_name)
+            )
+            # 传递provider实例，以便使用Cloudscraper备用方案
+            return UniversalGPT(client=provider.get_client, model=config.model_name, provider=provider)

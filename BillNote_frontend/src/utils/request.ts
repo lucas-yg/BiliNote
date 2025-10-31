@@ -15,7 +15,7 @@ const baseURL = import.meta.env.VITE_API_BASE_URL;
 
 // 创建实例
 export const request: AxiosInstance = axios.create({
-  baseURL: baseURL || '/api',
+  baseURL: '/api',
   timeout: 10000,
 });
 
